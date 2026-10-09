@@ -34,6 +34,8 @@ ENCODE = {
     "pf-fast":          [PFBENCH, "encode", "fast", "{R}"],
     "pf-default":       [PFBENCH, "encode", "default", "{R}"],
     "pf-best":          [PFBENCH, "encode", "best", "{R}"],
+    # exploration: adaptive filter + libdeflate level N
+    **{f"pf-l{n}": [PFBENCH, "encode", f"fast:5:{n}", "{R}"] for n in (1, 3, 5, 6, 7, 8, 9, 10, 11, 12)},
 }
 DECODE = {
     "imagers":     [RSREF, "bench-decode", "imagers", "{R}"],

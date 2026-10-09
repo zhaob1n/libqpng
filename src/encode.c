@@ -30,15 +30,28 @@ static struct libdeflate_compressor *make_compressor(int level, int color, int d
     return libdeflate_alloc_compressor(level);
 }
 
-/* Preset -> (filter, deflate level). See README "Presets" for the measurements behind these choices. */
-static void preset_params(pf_preset preset, int color, int depth, int *filter, int *level) {
-    (void)color; (void)depth;
-    switch (preset) {
-    case PF_PRESET_FASTEST: *filter = PF_FILTER_UP; *level = PF_DEFLATE_PNGFAST_RLE; break;
-    case PF_PRESET_FAST: *filter = PF_FILTER_ADAPTIVE; *level = PF_DEFLATE_PNGFAST; break;
-    case PF_PRESET_BEST: *filter = PF_FILTER_ADAPTIVE; *level = 9; break;
-    default: *filter = PF_FILTER_ADAPTIVE; *level = PF_DEFLATE_PNGFAST; break;
-    }
+/*
+ * Presets (measured choices; see NOTES.md and README "Presets"):
+ *  FASTEST  Up filter + run-only png-fast deflate.
+ *  FAST     adaptive filter + png-fast deflate.
+ *  DEFAULT  probe: adaptive + png-fast.
+ *           photo-like (ratio < GRAPHICS_RATIO): keep, except palette and 16-bit, which also try libdeflate
+ *             level 6 and keep the smaller stream;
+ *           graphics-like: also try filter None (png-fast), keep the better filter and recompress it with
+ *             level 6 (level 7 for alpha / 16-bit content).
+ *  BEST     photo-like: level 10 (near-optimal parsing); graphics-like: best filter at level 9.
+ * An explicit filter or deflate_level in pf_encode_options disables the probing.
+ */
+#define GRAPHICS_RATIO 6
+
+static size_t zcompress(int level, int color, int depth, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
+                        pf_status *st) {
+    struct libdeflate_compressor *c = make_compressor(level, color, depth);
+    if (!c) { *st = PF_ERR_NOMEM; return 0; }
+    size_t zn = libdeflate_zlib_compress(c, src, n, dst, cap);
+    libdeflate_free_compressor(c);
+    if (!zn) *st = PF_ERR_ENCODE;
+    return zn;
 }
 
 pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, pf_color color, int depth,
@@ -73,8 +86,15 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     if ((uint64_t)h * (rowbytes + 1) > ((uint64_t)1 << 40)) return PF_ERR_LIMITS;
     const size_t rawn = (size_t)h * (rowbytes + 1);
 
+    const int probe = opts->filter < 0 && !opts->deflate_level &&
+                      (opts->preset == PF_PRESET_DEFAULT || opts->preset == PF_PRESET_BEST);
     int filter, level;
-    preset_params(opts->preset, color, depth, &filter, &level);
+    switch (opts->preset) {
+    case PF_PRESET_FASTEST: filter = PF_FILTER_UP; level = PF_DEFLATE_PNGFAST_RLE; break;
+    case PF_PRESET_FAST: case PF_PRESET_DEFAULT: filter = PF_FILTER_ADAPTIVE; level = PF_DEFLATE_PNGFAST; break;
+    case PF_PRESET_BEST: filter = PF_FILTER_ADAPTIVE; level = 10; break;
+    default: return PF_ERR_ARGUMENT;
+    }
     if (opts->filter >= 0) { if (opts->filter > PF_FILTER_ADAPTIVE) return PF_ERR_ARGUMENT; filter = opts->filter; }
     if (opts->deflate_level) level = opts->deflate_level;
     if (!((level >= 1 && level <= 12) || level == PF_DEFLATE_PNGFAST || level == PF_DEFLATE_PNGFAST_RLE || level == PF_DEFLATE_PNGFAST_HIGH))
@@ -84,14 +104,13 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     if (!filt) return PF_ERR_NOMEM;
     pf__filter_image(filt, pixels, stride, h, rowbytes, bpp, filter);
 
-    struct libdeflate_compressor *c = make_compressor(level, color, depth);
-    if (!c) { pf__free(A, filt); return PF_ERR_NOMEM; }
-    const size_t zcap = libdeflate_zlib_compress_bound(c, rawn);
+    /* worst-case bound over all compression levels */
+    const size_t zcap = libdeflate_zlib_compress_bound(NULL, rawn);
     const size_t nchunks = zcap / 0x40000000u + 1;   /* IDAT chunks are split at 1 GiB */
     const size_t cap = 8 + 25 + (opts->palette ? 12 + 3 * (size_t)opts->palette_entries : 0) +
                        (opts->trns ? 12 + (size_t)opts->trns_bytes : 0) + 12 * nchunks + zcap + 12;
     uint8_t *out = pf__alloc(A, cap);
-    if (!out) { libdeflate_free_compressor(c); pf__free(A, filt); return PF_ERR_NOMEM; }
+    if (!out) { pf__free(A, filt); return PF_ERR_NOMEM; }
     static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
     uint8_t *p = out;
     memcpy(p, sig, 8); p += 8;
@@ -103,10 +122,42 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     /* single IDAT (bound < 1 GiB): compress in place behind the IDAT header. Otherwise compress to the end of the
      * buffer and lay the chunks out in front of the data. */
     uint8_t *z = nchunks == 1 ? p + 8 : out + cap - zcap - 12;
-    size_t zn = libdeflate_zlib_compress(c, filt, rawn, z, zcap);
-    libdeflate_free_compressor(c);
+    pf_status st = PF_OK;
+    size_t zn;
+    if (!probe) {
+        zn = zcompress(level, color, depth, filt, rawn, z, zcap, &st);
+    } else {
+        /* probe with png-fast; photo-like data under DEFAULT is mostly finished after this step */
+        const int best = opts->preset == PF_PRESET_BEST;
+        const int heavy = depth == 16 || color == PF_COLOR_GRAY_ALPHA || color == PF_COLOR_RGBA;
+        zn = zcompress(PF_DEFLATE_PNGFAST, color, depth, filt, rawn, z, zcap, &st);
+        if (zn && (double)rawn >= (double)zn * GRAPHICS_RATIO) {
+            /* graphics-like: try filter None too (often much better for synthetic content) */
+            uint8_t *alt = pf__alloc(A, rawn + 64), *tmp = pf__alloc(A, zcap);
+            if (!alt || !tmp) st = PF_ERR_NOMEM, zn = 0;
+            else {
+                pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, PF_FILTER_NONE);
+                size_t an = zcompress(PF_DEFLATE_PNGFAST, color, depth, alt, rawn, tmp, zcap, &st);
+                if (an && an < zn) { uint8_t *t = filt; filt = alt; alt = t; }
+                zn = an ? zcompress(best ? 9 : heavy ? 7 : 6, color, depth, filt, rawn, z, zcap, &st) : 0;
+            }
+            pf__free(A, alt); pf__free(A, tmp);
+        } else if (zn && best) {
+            zn = zcompress(level, color, depth, filt, rawn, z, zcap, &st);
+        } else if (zn && (depth == 16 || color == PF_COLOR_PALETTE)) {
+            /* the png-fast parser is weakest on 16-bit and palette photos: keep the better of it and level 6 */
+            uint8_t *tmp = pf__alloc(A, zcap);
+            if (!tmp) st = PF_ERR_NOMEM, zn = 0;
+            else {
+                size_t an = zcompress(6, color, depth, filt, rawn, tmp, zcap, &st);
+                if (an && an < zn) { memcpy(z, tmp, an); zn = an; }
+                if (!an) zn = 0;
+            }
+            pf__free(A, tmp);
+        }
+    }
     pf__free(A, filt);
-    if (!zn) { pf__free(A, out); return PF_ERR_ENCODE; }
+    if (!zn) { pf__free(A, out); return st != PF_OK ? st : PF_ERR_ENCODE; }
     for (size_t done = 0; done < zn;) {
         uint32_t len = (uint32_t)((zn - done) < 0x40000000u ? zn - done : 0x40000000u);
         if (p + 8 != z + done) memmove(p + 8, z + done, len);   /* p + 8 <= z + done always holds: chunks only add 12-byte overhead */
