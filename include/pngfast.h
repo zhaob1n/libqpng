@@ -122,10 +122,11 @@ PF_API void pf_image_free(pf_image *img);
 
 /* ---- encoding ----------------------------------------------------------------------------------------------- */
 typedef enum {
-    PF_PRESET_FASTEST = 0,   /* fixed Up/None filter, RLE + run-only deflate: maximum speed */
-    PF_PRESET_FAST = 1,      /* adaptive filter + png-fast deflate (fdeflate-style, libdeflate block coder) */
-    PF_PRESET_DEFAULT = 2,   /* adaptive filter + content-dependent: png-fast or libdeflate level 4-6 */
-    PF_PRESET_BEST = 3       /* adaptive filter + libdeflate level 9-12 (slow, smallest) */
+    PF_PRESET_FASTEST = 0,   /* Up filter + run-only png-fast deflate: maximum speed */
+    PF_PRESET_FAST = 1,      /* adaptive filter + png-fast deflate (fdeflate-style parser, Huffman-optimal blocks) */
+    PF_PRESET_DEFAULT = 2,   /* content-adaptive: png-fast for photos (+ level 6 for palette/16-bit),
+                                filter trial + libdeflate level 6/7 for graphics */
+    PF_PRESET_BEST = 3       /* libdeflate level 10 for photos, filter trial + level 9 for graphics */
 } pf_preset;
 
 typedef enum {

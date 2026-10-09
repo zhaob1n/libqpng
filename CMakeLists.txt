@@ -59,6 +59,22 @@ if(PNGFAST_BUILD_TOOLS)
   target_include_directories(pfbench PRIVATE src ${LD})   # raw-deflate benchmark uses the vendored libdeflate API
 endif()
 
+# Fuzz targets: always built as standalone replay/mutation drivers (also usable with AFL++);
+# with -DPNGFAST_LIBFUZZER=ON (clang) additionally as libFuzzer binaries.
+option(PNGFAST_LIBFUZZER "Build libFuzzer fuzz targets (clang)" OFF)
+if(PNGFAST_BUILD_TESTS OR PNGFAST_LIBFUZZER)
+  foreach(t decode roundtrip)
+    add_executable(fuzz_${t} fuzz/fuzz_${t}.c fuzz/standalone.c)
+    target_link_libraries(fuzz_${t} PRIVATE pngfast)
+    if(PNGFAST_LIBFUZZER)
+      add_executable(libfuzzer_${t} fuzz/fuzz_${t}.c)
+      target_compile_options(libfuzzer_${t} PRIVATE -fsanitize=fuzzer)
+      target_link_options(libfuzzer_${t} PRIVATE -fsanitize=fuzzer)
+      target_link_libraries(libfuzzer_${t} PRIVATE pngfast)
+    endif()
+  endforeach()
+endif()
+
 if(PNGFAST_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)

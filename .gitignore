@@ -1,3 +1,4 @@
 build*/
 tools/rsref/target*/
 *.o
+build-prof/
