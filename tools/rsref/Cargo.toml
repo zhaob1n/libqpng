@@ -1,0 +1,19 @@
+[package]
+name = "rsref"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Rust-side reference + benchmark tool for pngfast: png crate (git), image-rs, fdeflate"
+
+[dependencies]
+png = { path = "/workspace/image-bench/src/image-png" }
+image = { path = "/workspace/image-bench/src/image", default-features = false, features = ["png"] }
+fdeflate = { path = "/workspace/deflate-bench/src/fdeflate" }
+flate2 = { version = "1", default-features = false, optional = true }
+
+[features]
+# build with --features zlibrs to switch the png crate's flate2 backend (Balanced/High) to zlib-rs
+zlibrs = ["dep:flate2", "flate2/zlib-rs"]
+
+[profile.release]
+codegen-units = 16

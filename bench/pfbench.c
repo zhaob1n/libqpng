@@ -1,0 +1,124 @@
+/* pfbench - pngfast side of the benchmark (bench/run.py drives this and tools/rsref).
+ *   pfbench decode raw|expand|imagers REPS file.png...
+ *   pfbench encode PRESET[:FILTER[:LEVEL]] REPS file.png...   (source decoded to raw untimed; same format re-encoded)
+ *   pfbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh
+ *   pfbench inflate stock|pairs REPS orig:stream.zlib...
+ * CSV: tool,op,param,file,rep,width,height,ns,bytes. Each timing covers setup + allocation + work; 1 warm-up rep.
+ * DUMP_DIR=dir writes the last encoded PNG / compressed stream. */
+#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include "pngfast.h"
+#include "pf_libdeflate.h"
+
+static long long now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000000000LL + t.tv_nsec; }
+static unsigned char *slurp(const char *p, size_t *n) {
+    FILE *f = fopen(p, "rb"); if (!f) { perror(p); exit(2); }
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+    unsigned char *b = malloc((size_t)sz + 64); if (!b || fread(b, 1, (size_t)sz, f) != (size_t)sz) exit(2);
+    fclose(f); *n = (size_t)sz; return b;
+}
+static const char *base(const char *p) { const char *s = strrchr(p, '/'); return s ? s + 1 : p; }
+static void dump(const char *file, const char *tag, const void *d, size_t n) {
+    const char *dir = getenv("DUMP_DIR"); if (!dir) return;
+    char path[4096]; snprintf(path, sizeof path, "%s/%s.%s", dir, base(file), tag);
+    FILE *f = fopen(path, "wb"); if (f) { fwrite(d, 1, n, f); fclose(f); }
+}
+static const unsigned char *find_chunk(const unsigned char *b, size_t n, const char *type, int *len) {
+    for (size_t i = 8; i + 12 <= n;) {
+        size_t L = (size_t)b[i] << 24 | (size_t)b[i + 1] << 16 | (size_t)b[i + 2] << 8 | b[i + 3];
+        if (!memcmp(b + i + 4, "IDAT", 4)) break;
+        if (!memcmp(b + i + 4, type, 4)) { *len = (int)L; return b + i + 8; }
+        i += 12 + L;
+    }
+    return NULL;
+}
+static int parse_preset(const char *s) {
+    return !strncmp(s, "fastest", 7) ? PF_PRESET_FASTEST : !strncmp(s, "fast", 4) ? PF_PRESET_FAST :
+           !strncmp(s, "best", 4) ? PF_PRESET_BEST : PF_PRESET_DEFAULT;
+}
+static int deflate_level(const char *s) {
+    return !strcmp(s, "pf") ? LIBDEFLATE_PNG_FAST_LEVEL : !strcmp(s, "pfrle") ? -1 : !strcmp(s, "pfhigh") ? -2 : atoi(s);
+}
+
+int main(int argc, char **argv) {
+    if (argc < 5) { fprintf(stderr, "usage: see source header\n"); return 2; }
+    const char *op = argv[1], *param = argv[2]; int reps = atoi(argv[3]);
+    for (int fi = 4; fi < argc; fi++) {
+        const char *file = argv[fi];
+        if (!strcmp(op, "inflate")) {
+            char *o = strdup(file), *s = strchr(o, ':'); if (!s) return 2; *s++ = 0;
+            size_t n, sn; unsigned char *orig = slurp(o, &n), *st = slurp(s, &sn), *out = malloc(n + 1);
+            for (int r = 0; r <= reps; r++) {
+                size_t got = 0; long long t0 = now_ns();
+                struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
+                if (!strcmp(param, "pairs")) libdeflate_set_pair_literals(d, 1);
+                int rc = libdeflate_zlib_decompress(d, st, sn, out, n, &got);
+                libdeflate_free_decompressor(d);
+                long long dt = now_ns() - t0;
+                if (rc || got != n || memcmp(out, orig, n)) { fprintf(stderr, "FAIL inflate %s\n", s); return 1; }
+                if (r) printf("pngfast,inflate,%s,%s,%d,0,0,%lld,%zu\n", param, o, r, dt, n);
+            }
+            free(orig); free(st); free(out); free(o); continue;
+        }
+        size_t n; unsigned char *buf = slurp(file, &n);
+        if (!strcmp(op, "deflate")) {
+            int lv = deflate_level(param);
+            size_t cap = n + n / 8 + 65536; unsigned char *out = malloc(cap), *chk = malloc(n + 1);
+            for (int r = 0; r <= reps; r++) {
+                long long t0 = now_ns();
+                struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL : lv);
+                if (lv == -1) libdeflate_set_png_min_match(c, 0);
+                if (lv == -2) libdeflate_set_png_params(c, 0, 9);
+                size_t m = libdeflate_zlib_compress(c, buf, n, out, cap);
+                libdeflate_free_compressor(c);
+                long long dt = now_ns() - t0;
+                size_t got = 0; struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
+                if (!m || libdeflate_zlib_decompress(d, out, m, chk, n, &got) || got != n || memcmp(chk, buf, n)) { fprintf(stderr, "FAIL deflate %s\n", file); return 1; }
+                libdeflate_free_decompressor(d);
+                if (r == reps) { char tag[64]; snprintf(tag, sizeof tag, "pngfast-%s.zlib", param); dump(file, tag, out, m); }
+                if (r) printf("pngfast,deflate,%s,%s,%d,0,0,%lld,%zu\n", param, file, r, dt, m);
+            }
+            free(out); free(chk); free(buf); continue;
+        }
+        if (!strcmp(op, "decode")) {
+            pf_decode_options o; pf_decode_options_init(&o);
+            o.output = !strcmp(param, "expand") ? PF_OUTPUT_EXPAND : !strcmp(param, "imagers") ? PF_OUTPUT_IMAGERS : PF_OUTPUT_RAW;
+            for (int r = 0; r <= reps; r++) {
+                pf_image im; long long t0 = now_ns();
+                pf_status s = pf_decode(buf, n, &o, &im);
+                long long dt = now_ns() - t0;
+                if (s) { fprintf(stderr, "FAIL decode %s: %s\n", file, pf_status_string(s)); return 1; }
+                if (r == reps) dump(file, "pngfast.raw", im.pixels, im.size);
+                if (r) printf("pngfast,decode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, im.size);
+                pf_image_free(&im);
+            }
+            free(buf); continue;
+        }
+        if (!strcmp(op, "encode")) {
+            pf_image im; pf_status s = pf_decode(buf, n, NULL, &im);
+            if (s) { fprintf(stderr, "FAIL source decode %s\n", file); return 1; }
+            pf_encode_options o; pf_encode_options_init(&o);
+            o.preset = parse_preset(param);
+            const char *c1 = strchr(param, ':');
+            if (c1) { o.filter = atoi(c1 + 1); const char *c2 = strchr(c1 + 1, ':'); if (c2) o.deflate_level = deflate_level(c2 + 1) < 0 ? 100 - deflate_level(c2 + 1) : deflate_level(c2 + 1); }
+            int pl = 0, tl = 0;
+            o.palette = find_chunk(buf, n, "PLTE", &pl); o.palette_entries = o.palette ? pl / 3 : 0;
+            o.trns = find_chunk(buf, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;
+            for (int r = 0; r <= reps; r++) {
+                uint8_t *png; size_t pn; long long t0 = now_ns();
+                s = pf_encode(im.pixels, im.width, im.height, im.stride, (pf_color)im.color_type, im.bit_depth, &o, &png, &pn);
+                long long dt = now_ns() - t0;
+                if (s) { fprintf(stderr, "FAIL encode %s: %s\n", file, pf_status_string(s)); return 1; }
+                if (r == reps) { char tag[96]; snprintf(tag, sizeof tag, "pngfast-%s.png", param); dump(file, tag, png, pn); }
+                if (r) printf("pngfast,encode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, pn);
+                pf_buffer_free(png, NULL);
+            }
+            pf_image_free(&im); free(buf); continue;
+        }
+        fprintf(stderr, "unknown op %s\n", op); return 2;
+    }
+    return 0;
+}
