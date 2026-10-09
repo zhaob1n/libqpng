@@ -62,6 +62,15 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   (7.066 MB vs 7.267 MB, 2x faster; png Balanced/zlib-rs 7.337 MB).
 * BEST keeps the smaller of the png-fast probe and the L9/L10 stream (L10 alone was not always smaller).
 
+## 22:06-22:14  resume after interruption
+* Decoder regression found vs v3 prototype (photo ga8 269 vs 381 MB/s, g8 187 vs 226): caused by CMake's
+  Release -O3 (v3 was built -O2); -O3 slows the 2-row wavefront kernels. Release default is now -O2
+  (encoder speed unchanged within noise). Re-checked in the final decode matrix (v3-imagers column).
+* clang 19 installed via apt: `-Wall -Wextra` clean on gcc 12 and clang 19, ctest passes with both.
+* scripts/sanitize.sh (gcc ASan+UBSan): ctest 5/5, 1000 mutations/seed decode + 100/seed round trip: clean.
+* libFuzzer (clang, ASan+UBSan, library now instrumented with -fsanitize=fuzzer-no-link):
+  fuzz_decode 75 s = 2.39M execs, cov 883, no findings; fuzz_roundtrip 45 s = 45K execs, cov 1713, no findings.
+* ctest incl. roundtrip_corpus (160-file format corpus, 13 encoder variants each): 6/6 pass.
+
 ## Open / TODO
-* clang not installed on the box: clang -Wall -Wextra build and libFuzzer sessions not run (gcc-only so far).
 * Faster FASTEST on graphics (fixed-code single pass like fdeflate UltraFast) if needed.
