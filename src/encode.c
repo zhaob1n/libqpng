@@ -28,8 +28,8 @@ static struct libdeflate_compressor *make_compressor(int level) {
  *  FASTEST  Up filter + run-only png-fast deflate.
  *  FAST     adaptive filter + png-fast deflate.
  *  DEFAULT  probe: adaptive + png-fast.
- *           photo-like (ratio < GRAPHICS_RATIO): keep, except palette and 16-bit, which also try libdeflate
- *             level 6 and keep the smaller stream;
+ *           photo-like (ratio < GRAPHICS_RATIO): keep, except 16-bit (also try libdeflate level 6) and
+ *             8-bit palette (also try Paeth everywhere); the smaller stream wins;
  *           graphics-like: also try filter None (png-fast), keep the better filter and recompress it with
  *             level 6 (level 7 for alpha / 16-bit content).
  *  BEST     photo-like: level 10 (near-optimal parsing); graphics-like: best filter at level 9.
@@ -137,8 +137,8 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
             pf__free(A, alt); pf__free(A, tmp);
         } else if (zn && best) {
             zn = zcompress(level, filt, rawn, z, zcap, &st);
-        } else if (zn && (depth == 16 || color == PF_COLOR_PALETTE)) {
-            /* the png-fast parser is weakest on 16-bit and palette photos: keep the better of it and level 6 */
+        } else if (zn && depth == 16) {
+            /* png-fast is weakest on 16-bit photos (noisy low bytes): keep the better of it and level 6 */
             uint8_t *tmp = pf__alloc(A, zcap);
             if (!tmp) st = PF_ERR_NOMEM, zn = 0;
             else {
@@ -147,6 +147,17 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
                 if (!an) zn = 0;
             }
             pf__free(A, tmp);
+        } else if (zn && color == PF_COLOR_PALETTE && depth == 8) {
+            /* the residual-sum heuristic is a poor fit for palette indices: also try Paeth everywhere */
+            uint8_t *alt = pf__alloc(A, rawn + 64), *tmp = pf__alloc(A, zcap);
+            if (!alt || !tmp) st = PF_ERR_NOMEM, zn = 0;
+            else {
+                pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, PF_FILTER_PAETH);
+                size_t an = zcompress(PF_DEFLATE_PNGFAST, alt, rawn, tmp, zcap, &st);
+                if (an && an < zn) { memcpy(z, tmp, an); zn = an; }
+                if (!an) zn = 0;
+            }
+            pf__free(A, alt); pf__free(A, tmp);
         }
     }
     pf__free(A, filt);

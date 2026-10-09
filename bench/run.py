@@ -5,6 +5,7 @@ Reproducible pngfast-vs-Rust benchmark driver.
   bench/run.py encode  [--rounds N] [--reps N] [--cpu C] [--configs a,b,..] [--out results.csv]
   bench/run.py decode  ...
   bench/run.py deflate ...   (raw zlib streams: pngfast's libdeflate vs fdeflate)
+  bench/run.py inflate ...   (decompress PNG IDAT zlib streams made by several encoders)
 
 Method: checks box load first (refuses to start if the 1-min load average is
 above --max-load unless --force), pins every process to one core (taskset),
@@ -53,6 +54,13 @@ DEFLATE = {
     "pf-6":               [PFBENCH, "deflate", "6", "{R}"],
 }
 
+INFLATE = {
+    "fdeflate":        [RSREF, "bench-inflate", "-", "{R}"],
+    "libdeflate":      [PFBENCH, "inflate", "stock", "{R}"],
+    "pf-pairs":        [PFBENCH, "inflate", "pairs", "{R}"],
+}
+STREAMS = os.environ.get("PNGFAST_STREAMS", "/workspace/deflate-bench/streams/png")
+
 FMT_GROUPS = [("rgb8", r"\.rgb8t?\."), ("rgba8", r"\.rgba8\."), ("ga8", r"\.ga8\."),
               ("g8", r"\.g8t?\."), ("p8", r"\.p8t?\."), ("sub8", r"\.(g|p)[124]\."),
               ("16bit", r"\.(g16t?|ga16|rgb16t?|rgba16)\.")]
@@ -64,6 +72,8 @@ def content(f):
 def group_of(f, mode):
     if mode == "deflate":
         return "graphics" if "screen" in f else "photo"
+    if mode == "inflate":
+        return "stream from " + f.split(".idat.")[1].replace(".zlib", "")
     for g, rx in FMT_GROUPS:
         if re.search(rx, os.path.basename(f)):
             return f"{content(f)}/{g}"
@@ -81,7 +91,7 @@ def run(argv, reps, files, cpu):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["encode", "decode", "deflate"])
+    ap.add_argument("mode", choices=["encode", "decode", "deflate", "inflate"])
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--cpu", type=int, default=3)
@@ -93,9 +103,12 @@ def main():
     ap.add_argument("--out", default="")
     a = ap.parse_args()
 
-    table = {"encode": ENCODE, "decode": DECODE, "deflate": DEFLATE}[a.mode]
+    table = {"encode": ENCODE, "decode": DECODE, "deflate": DEFLATE, "inflate": INFLATE}[a.mode]
     cfgs = [c for c in (a.configs.split(",") if a.configs else table)]
-    if a.mode == "deflate":
+    if a.mode == "inflate":
+        files = sorted(f"{RAWDIR}/png/{f.split('.idat.')[0]}.idat:{STREAMS}/{f}" for f in os.listdir(STREAMS)
+                       if f.endswith(".zlib"))
+    elif a.mode == "deflate":
         files = sorted([f"{RAWDIR}/png/{f}" for f in os.listdir(f"{RAWDIR}/png") if f.endswith(".idat")] +
                        [f"{RAWDIR}/png-screen/{f}" for f in os.listdir(f"{RAWDIR}/png-screen") if f.endswith(".filt")])
     else:
@@ -112,7 +125,9 @@ def main():
 
     # raw (decoded) size per file
     raw = {}
-    if a.mode == "deflate":
+    if a.mode == "inflate":
+        raw = {f: os.path.getsize(f.split(":")[0]) for f in files}
+    elif a.mode == "deflate":
         raw = {f: os.path.getsize(f) for f in files}
     else:
         for r in run([PFBENCH, "decode", "raw", "1"], 1, files, a.cpu):
@@ -126,7 +141,11 @@ def main():
         la, _ = load_ok(a.max_load)
         print(f"# round {rd+1}/{a.rounds} load {la:.2f}", file=sys.stderr)
         for c in order:
-            for r in run(table[c], a.reps, files, a.cpu):
+            if a.mode == "inflate":   # tools report the original file; key results by stream instead
+                res = [r[:3] + [f] + r[4:] for f in files for r in run(table[c], a.reps, [f], a.cpu)]
+            else:
+                res = run(table[c], a.reps, files, a.cpu)
+            for r in res:
                 ns[(c, r[3])].append(int(r[7]))
                 size[(c, r[3])] = int(r[8])
                 rows.append([c] + r)
@@ -146,7 +165,7 @@ def main():
             t = sum(st.median(ns[(c, f)]) for f in fs)
             rb = sum(raw[f] for f in fs)
             cell = f"{rb / t * 1e3:.0f}"
-            if a.mode != "decode":
+            if a.mode in ("encode", "deflate"):
                 cell += f" @ {rb / sum(size[(c, f)] for f in fs):.3f}"
             cells.append(cell)
         print(f"| {g} | " + " | ".join(cells) + " |")
