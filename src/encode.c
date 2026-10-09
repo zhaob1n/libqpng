@@ -15,19 +15,12 @@ static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uin
     return p + 12 + len;
 }
 
-static struct libdeflate_compressor *make_compressor(int level, int color, int depth) {
-    if (level >= PF_DEFLATE_PNGFAST) {
-        struct libdeflate_compressor *c = libdeflate_alloc_compressor(LIBDEFLATE_PNG_FAST_LEVEL);
-        if (!c) return NULL;
-        if (level == PF_DEFLATE_PNGFAST_RLE) libdeflate_set_png_min_match(c, 0);
-        else {
-            if (level == PF_DEFLATE_PNGFAST_HIGH) libdeflate_set_png_params(c, 0, 9);
-            /* unfiltered palette / low-depth data repeats in short strings: allow (cost-gated) 4/5-byte matches */
-            if (color == PF_COLOR_PALETTE || depth < 8) libdeflate_set_png_min_match(c, depth == 8 ? 4 : 5);
-        }
-        return c;
-    }
-    return libdeflate_alloc_compressor(level);
+static struct libdeflate_compressor *make_compressor(int level) {
+    if (level < PF_DEFLATE_PNGFAST) return libdeflate_alloc_compressor(level);
+    struct libdeflate_compressor *c = libdeflate_alloc_compressor(LIBDEFLATE_PNG_FAST_LEVEL);
+    if (c && level == PF_DEFLATE_PNGFAST_RLE) libdeflate_set_png_min_match(c, 0);
+    if (c && level == PF_DEFLATE_PNGFAST_HIGH) libdeflate_set_png_params(c, 0, 9);
+    return c;
 }
 
 /*
@@ -44,9 +37,9 @@ static struct libdeflate_compressor *make_compressor(int level, int color, int d
  */
 #define GRAPHICS_RATIO 6
 
-static size_t zcompress(int level, int color, int depth, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
+static size_t zcompress(int level, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
                         pf_status *st) {
-    struct libdeflate_compressor *c = make_compressor(level, color, depth);
+    struct libdeflate_compressor *c = make_compressor(level);
     if (!c) { *st = PF_ERR_NOMEM; return 0; }
     size_t zn = libdeflate_zlib_compress(c, src, n, dst, cap);
     libdeflate_free_compressor(c);
@@ -125,31 +118,31 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     pf_status st = PF_OK;
     size_t zn;
     if (!probe) {
-        zn = zcompress(level, color, depth, filt, rawn, z, zcap, &st);
+        zn = zcompress(level, filt, rawn, z, zcap, &st);
     } else {
         /* probe with png-fast; photo-like data under DEFAULT is mostly finished after this step */
         const int best = opts->preset == PF_PRESET_BEST;
         const int heavy = depth == 16 || color == PF_COLOR_GRAY_ALPHA || color == PF_COLOR_RGBA;
-        zn = zcompress(PF_DEFLATE_PNGFAST, color, depth, filt, rawn, z, zcap, &st);
+        zn = zcompress(PF_DEFLATE_PNGFAST, filt, rawn, z, zcap, &st);
         if (zn && (double)rawn >= (double)zn * GRAPHICS_RATIO) {
             /* graphics-like: try filter None too (often much better for synthetic content) */
             uint8_t *alt = pf__alloc(A, rawn + 64), *tmp = pf__alloc(A, zcap);
             if (!alt || !tmp) st = PF_ERR_NOMEM, zn = 0;
             else {
                 pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, PF_FILTER_NONE);
-                size_t an = zcompress(PF_DEFLATE_PNGFAST, color, depth, alt, rawn, tmp, zcap, &st);
+                size_t an = zcompress(PF_DEFLATE_PNGFAST, alt, rawn, tmp, zcap, &st);
                 if (an && an < zn) { uint8_t *t = filt; filt = alt; alt = t; }
-                zn = an ? zcompress(best ? 9 : heavy ? 7 : 6, color, depth, filt, rawn, z, zcap, &st) : 0;
+                zn = an ? zcompress(best ? 9 : heavy ? 7 : 6, filt, rawn, z, zcap, &st) : 0;
             }
             pf__free(A, alt); pf__free(A, tmp);
         } else if (zn && best) {
-            zn = zcompress(level, color, depth, filt, rawn, z, zcap, &st);
+            zn = zcompress(level, filt, rawn, z, zcap, &st);
         } else if (zn && (depth == 16 || color == PF_COLOR_PALETTE)) {
             /* the png-fast parser is weakest on 16-bit and palette photos: keep the better of it and level 6 */
             uint8_t *tmp = pf__alloc(A, zcap);
             if (!tmp) st = PF_ERR_NOMEM, zn = 0;
             else {
-                size_t an = zcompress(6, color, depth, filt, rawn, tmp, zcap, &st);
+                size_t an = zcompress(6, filt, rawn, tmp, zcap, &st);
                 if (an && an < zn) { memcpy(z, tmp, an); zn = an; }
                 if (!an) zn = 0;
             }

@@ -2639,6 +2639,12 @@ pngf_entropy8(const u32 *freq, unsigned n)
 	return (u32)(sum / tot) + 1;
 }
 
+#ifndef PNGF_HASH_MIN_GAIN
+#  define PNGF_HASH_MIN_GAIN	8
+#endif
+#define PNGF_RUNONLY_MIN	3	/* run-only blocks after a failed probe ... */
+#define PNGF_RUNONLY_MAX	48	/* ... doubling per consecutive failure */
+
 static void
 deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 			  const u8 *in, size_t in_nbytes,
@@ -2653,9 +2659,19 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 	const u32 minlen = c->png_min_hash_len;
 	const u64 hmask = minlen >= 8 ? ~0ULL : (1ULL << (8 * minlen)) - 1;
 	u32 litcost8 = 64;
+	/*
+	 * Adaptive hashing: when a block's hashed matches save (by the literal
+	 * cost estimate) less than 1/PNGF_HASH_MIN_GAIN of the cost of its
+	 * literals, and literals make up at least a quarter of the block
+	 * (typical for filtered photos, where only runs pay off), the next
+	 * runonly_len blocks are parsed in run-only mode (much faster, usually
+	 * smaller); then hashing is re-tried.  runonly_len doubles with every
+	 * consecutive failed probe.
+	 */
+	u32 runonly_blocks = 0, runonly_len = PNGF_RUNONLY_MIN;
 
 	memset(tab, 0, sizeof(c->p.pf.tab));
-	if (minlen != 0 && minlen < 8) {
+	if (minlen != 0) {
 		/* initial literal-cost estimate: order-0 entropy of a prefix */
 		u32 h[256];
 
@@ -2671,6 +2687,9 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 		const u8 *lit_start = in_next;
 		const u8 *ip = in_next;
 		const u8 *block_end;
+		const bool runonly = minlen == 0 || runonly_blocks != 0;
+		s64 hash_gain8 = 0;	/* est. bits (x8) saved by hashed matches */
+		size_t matched = 0;	/* bytes covered by runs + hashed matches */
 
 		deflate_begin_sequences(c, seq);
 		while (ip < max_block_end && ip < in_limit &&
@@ -2679,7 +2698,7 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 			const u8 *ms;
 			u32 len, off;
 
-			if (minlen == 0) {
+			if (runonly) {
 				/*
 				 * run-only mode: test the 4 start positions ip..ip+3
 				 * for a run of 5 equal bytes at once (SWAR).
@@ -2758,6 +2777,8 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 					mp--;
 					len++;
 				}
+				hash_gain8 += (s64)len * litcost8 -
+					      8 * (c->png_short_base + bsr32(off));
 				/* index the inside of the match (cheap: matches are rare) */
 				{
 					const u8 *p = ip + 1, *e = MIN(ms + len, in_limit);
@@ -2767,6 +2788,7 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 			}
 			seq->litrunlen_and_length = (u32)(ms - lit_start);
 			deflate_choose_match(c, len, off, false, &seq);
+			matched += len;
 			lit_start = ip = ms + len;
 		}
 		if (ip >= in_limit)
@@ -2775,11 +2797,29 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 			block_end = MAX(lit_start, MIN(ip, max_block_end));
 		seq->litrunlen_and_length = (u32)(block_end - lit_start);
 
+		if (minlen != 0) {
+			if (runonly)
+				runonly_blocks--;
+			else {
+				const size_t bl = block_end - block_begin;
+				const size_t lits = bl - MIN(matched, bl);
+
+				/* literal-dominated (photo-like) and hashing does not pay */
+				if (lits * 4 >= bl &&
+				    hash_gain8 * PNGF_HASH_MIN_GAIN < (s64)lits * litcost8) {
+					runonly_blocks = runonly_len;
+					runonly_len = MIN(2 * runonly_len, PNGF_RUNONLY_MAX);
+				} else {
+					runonly_len = PNGF_RUNONLY_MIN;
+				}
+			}
+		}
+
 		/* histogram the literals of this block */
 		pngf_count_literals(c->freqs.litlen, block_begin, c->p.pf.sequences);
 		deflate_finish_block(c, os, block_begin, block_end - block_begin,
 				     c->p.pf.sequences, block_end == in_end);
-		if (minlen != 0 && minlen < 8) {
+		if (minlen != 0) {
 			/* literal cost under this block's actual code */
 			u64 tot = 0, bits = 0;
 			unsigned i;
