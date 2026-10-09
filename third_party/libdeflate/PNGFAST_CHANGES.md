@@ -20,6 +20,11 @@ libdeflate's own block machinery (per-block optimal dynamic Huffman codes, store
 * literal skip-ahead: after k literals the probe step grows by `k >> skip_shift` (incompressible regions
   are almost free);
 * short matches (< 8) are cost-gated against the running literal cost estimate of the previous block;
+* **adaptive hashing**: after each block the parser estimates what its hashed matches saved (match length x
+  current literal cost - match cost). If that is under 1/8 of the block's literal cost and literals are at
+  least a quarter of the block (filtered photos: only runs pay), the next blocks are parsed run-only
+  (3, doubling per consecutive failed probe up to 48) before hashing is re-tried. Photos: 1.2-3x faster and
+  slightly smaller; graphics unchanged;
 * **run-only mode** (`min_len == 0`): no hash table at all; a SWAR test checks 4 candidate run starts per
   64-bit load. Used by pngfast's FASTEST preset.
 

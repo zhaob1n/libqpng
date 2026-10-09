@@ -101,6 +101,9 @@ def main():
     ap.add_argument("--max-load", type=float, default=2.5)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--out", default="")
+    ap.add_argument("--merge", default="", help="comma-separated CSVs from earlier runs (--out) whose configs "
+                    "are added to the table (e.g. slow reference encoders measured once)")
+    ap.add_argument("--order", default="", help="column order for the table (default: run configs, then merged)")
     a = ap.parse_args()
 
     table = {"encode": ENCODE, "decode": DECODE, "deflate": DEFLATE, "inflate": INFLATE}[a.mode]
@@ -133,6 +136,7 @@ def main():
         for r in run([PFBENCH, "decode", "raw", "1"], 1, files, a.cpu):
             raw[r[3]] = int(r[8])
 
+    table_merged = set()
     ns = collections.defaultdict(list)   # (cfg, file) -> [ns]
     size = {}                            # (cfg, file) -> encoded bytes
     rows = []
@@ -152,6 +156,17 @@ def main():
     if a.out:
         with open(a.out, "w", newline="") as fh:
             csv.writer(fh).writerows(rows)
+    for m in filter(None, a.merge.split(",")):
+        for r in csv.reader(open(m)):
+            c = r[0]
+            if c in cfgs and c not in table_merged:
+                continue
+            if c not in cfgs:
+                cfgs.append(c); table_merged.add(c)
+            if r[4] in raw:
+                ns[(c, r[4])].append(int(r[8])); size[(c, r[4])] = int(r[9])
+    if a.order:
+        cfgs = [c for c in a.order.split(",") if c in cfgs]
 
     groups = sorted({group_of(f, a.mode) for f in files})
     print(f"\n{a.mode}: MB/s of raw bytes (sum raw / sum per-file median)" +

@@ -48,6 +48,20 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   - alpha graphics: zlib-9 (png High with zlib-rs) finds 4-5% smaller streams than libdeflate L9-L10 even with
     max_search_depth 4096 (tested, reverted) - an LZ-parsing difference, not search effort.
 
+## 22:00  FAST / DEFAULT / BEST tuning
+* First full matrix (bench/results/encode_fast.md) showed FAST losing *speed* to png Fast on photo ga8/p8/sub8
+  (129-149 vs 265-330 MB/s). Cause: hashed matches on filtered photos are short and frequent (ga8: 711K
+  matches of ~8.7 bytes in 12 MB), each resets the skip-ahead. Adaptive filter + run-only parsing was
+  *smaller and 2-3.5x faster* on every 8-bit photo group (only 16-bit lost 4%).
+  -> png-fast now adapts per block (see third_party/libdeflate/PNGFAST_CHANGES.md "adaptive hashing").
+  First attempt (match coverage) never triggered; second (gain vs block length) mis-fired on screenshots
+  (+23% size); final rule (gain vs literal cost, literal-dominated blocks only, backoff) keeps graphics at
+  2.633 MB (was 2.683) and makes photo ga8 3x faster (40.7 vs 122 ms, smaller).
+* Palette min-match 4/5 no longer helps once the adaptive filter is used (sizes within 0.5%): removed.
+* DEFAULT for 8-bit palette photos: trying Paeth-everywhere with png-fast beats adding level 6
+  (7.066 MB vs 7.267 MB, 2x faster; png Balanced/zlib-rs 7.337 MB).
+* BEST keeps the smaller of the png-fast probe and the L9/L10 stream (L10 alone was not always smaller).
+
 ## Open / TODO
 * clang not installed on the box: clang -Wall -Wextra build and libFuzzer sessions not run (gcc-only so far).
 * Faster FASTEST on graphics (fixed-code single pass like fdeflate UltraFast) if needed.
