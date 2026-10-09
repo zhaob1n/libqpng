@@ -26,13 +26,12 @@ static struct libdeflate_compressor *make_compressor(int level) {
 /*
  * Presets (measured choices; see NOTES.md and README "Presets"):
  *  FASTEST  Up filter + run-only png-fast deflate.
- *  FAST     adaptive filter + png-fast deflate.
- *  DEFAULT  probe: adaptive + png-fast.
- *           photo-like (ratio < GRAPHICS_RATIO): keep, except 16-bit (also try libdeflate level 6) and
- *             8-bit palette (also try Paeth everywhere); the smaller stream wins;
- *           graphics-like: also try filter None (png-fast), keep the better filter and recompress it with
- *             level 6 (level 7 for alpha / 16-bit content).
- *  BEST     photo-like: level 10 (near-optimal parsing); graphics-like: best filter at level 9.
+ *  FAST     adaptive filter + png-fast deflate (hashing adapts per block).
+ *  DEFAULT  1. probe: adaptive + png-fast; ratio >= GRAPHICS_RATIO means graphics-like content.
+ *           2. filter trial with png-fast: graphics -> also filter None, 8-bit palette -> also Paeth.
+ *           3. graphics: recompress the winner at level 6 (7 for alpha / 16-bit);
+ *              16-bit photos: also level 6, keep the smaller; other photos: keep the png-fast stream.
+ *  BEST     steps 1-2, then level 9 (graphics) or 10 (photos, near-optimal parsing).
  * An explicit filter or deflate_level in pf_encode_options disables the probing.
  */
 #define GRAPHICS_RATIO 6
@@ -120,45 +119,44 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     if (!probe) {
         zn = zcompress(level, filt, rawn, z, zcap, &st);
     } else {
-        /* probe with png-fast; photo-like data under DEFAULT is mostly finished after this step */
+        /* 1. probe: adaptive filter + png-fast, written straight to the output */
         const int best = opts->preset == PF_PRESET_BEST;
         const int heavy = depth == 16 || color == PF_COLOR_GRAY_ALPHA || color == PF_COLOR_RGBA;
         zn = zcompress(PF_DEFLATE_PNGFAST, filt, rawn, z, zcap, &st);
-        if (zn && (double)rawn >= (double)zn * GRAPHICS_RATIO) {
-            /* graphics-like: try filter None too (often much better for synthetic content) */
-            uint8_t *alt = pf__alloc(A, rawn + 64), *tmp = pf__alloc(A, zcap);
-            if (!alt || !tmp) st = PF_ERR_NOMEM, zn = 0;
-            else {
-                pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, PF_FILTER_NONE);
-                size_t an = zcompress(PF_DEFLATE_PNGFAST, alt, rawn, tmp, zcap, &st);
-                if (an && an < zn) { uint8_t *t = filt; filt = alt; alt = t; }
-                zn = an ? zcompress(best ? 9 : heavy ? 7 : 6, filt, rawn, z, zcap, &st) : 0;
-            }
-            pf__free(A, alt); pf__free(A, tmp);
-        } else if (zn && best) {
-            zn = zcompress(level, filt, rawn, z, zcap, &st);
-        } else if (zn && depth == 16) {
-            /* png-fast is weakest on 16-bit photos (noisy low bytes): keep the better of it and level 6 */
-            uint8_t *tmp = pf__alloc(A, zcap);
-            if (!tmp) st = PF_ERR_NOMEM, zn = 0;
-            else {
-                size_t an = zcompress(6, filt, rawn, tmp, zcap, &st);
-                if (an && an < zn) { memcpy(z, tmp, an); zn = an; }
-                if (!an) zn = 0;
-            }
-            pf__free(A, tmp);
-        } else if (zn && color == PF_COLOR_PALETTE && depth == 8) {
-            /* the residual-sum heuristic is a poor fit for palette indices: also try Paeth everywhere */
-            uint8_t *alt = pf__alloc(A, rawn + 64), *tmp = pf__alloc(A, zcap);
-            if (!alt || !tmp) st = PF_ERR_NOMEM, zn = 0;
-            else {
-                pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, PF_FILTER_PAETH);
-                size_t an = zcompress(PF_DEFLATE_PNGFAST, alt, rawn, tmp, zcap, &st);
-                if (an && an < zn) { memcpy(z, tmp, an); zn = an; }
-                if (!an) zn = 0;
-            }
-            pf__free(A, alt); pf__free(A, tmp);
+        const int graphics = zn && (double)rawn >= (double)zn * GRAPHICS_RATIO;
+        /* 2. filter trial where the residual-sum heuristic is known to mislead: synthetic content (try None)
+         *    and 8-bit palette indices (try Paeth everywhere). The png-fast size decides. */
+        const int alt_filter = graphics ? PF_FILTER_NONE
+                             : (color == PF_COLOR_PALETTE && depth == 8) ? PF_FILTER_PAETH : -1;
+        uint8_t *alt = NULL, *tmp = NULL;
+        if (zn && (alt_filter >= 0 || best || depth == 16)) {
+            tmp = pf__alloc(A, zcap);
+            if (!tmp) { st = PF_ERR_NOMEM; zn = 0; }
         }
+        if (zn && alt_filter >= 0) {
+            alt = pf__alloc(A, rawn + 64);
+            if (!alt) { st = PF_ERR_NOMEM; zn = 0; }
+            else {
+                pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, alt_filter);
+                size_t an = zcompress(PF_DEFLATE_PNGFAST, alt, rawn, tmp, zcap, &st);
+                if (!an) zn = 0;
+                else if (an < zn) {
+                    uint8_t *t = filt; filt = alt; alt = t;
+                    memcpy(z, tmp, an); zn = an;
+                }
+            }
+        }
+        /* 3. final compression of the chosen filtering */
+        if (zn && graphics && !best) {
+            zn = zcompress(heavy ? 7 : 6, filt, rawn, z, zcap, &st);
+        } else if (zn && (best || depth == 16)) {
+            /* BEST: level 9 (graphics) / 10 (photos). DEFAULT 16-bit photos: level 6, png-fast is weakest
+             * there (noisy low bytes). Either way the png-fast stream already in z is kept if smaller. */
+            size_t an = zcompress(best ? (graphics ? 9 : 10) : 6, filt, rawn, tmp, zcap, &st);
+            if (!an) zn = 0;
+            else if (an < zn) { memcpy(z, tmp, an); zn = an; }
+        }
+        pf__free(A, alt); pf__free(A, tmp);
     }
     pf__free(A, filt);
     if (!zn) { pf__free(A, out); return st != PF_OK ? st : PF_ERR_ENCODE; }
