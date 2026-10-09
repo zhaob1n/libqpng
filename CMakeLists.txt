@@ -11,6 +11,7 @@ option(PNGFAST_BUILD_TESTS "Build tests" ON)
 option(PNGFAST_BUILD_TOOLS "Build pngfast-cli and the benchmark tool" ON)
 option(PNGFAST_BUILD_SHARED "Build a shared library (default: static)" OFF)
 option(PNGFAST_SANITIZE "Build with -fsanitize=address,undefined" OFF)
+option(PNGFAST_LIBFUZZER "Build libFuzzer fuzz targets (clang)" OFF)
 set(PNGFAST_CORPUS_DIR "" CACHE PATH "Optional directory with the generated format corpus (tests)")
 set(PNGFAST_PNGSUITE_DIR "" CACHE PATH "Optional PngSuite directory (tests)")
 
@@ -23,6 +24,9 @@ set(CMAKE_C_EXTENSIONS ON)   # GNU C11: target attributes, __builtin_cpu_support
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if(PNGFAST_LIBFUZZER)
+  add_compile_options(-fsanitize=fuzzer-no-link)   # coverage instrumentation for the library itself
+endif()
 if(PNGFAST_SANITIZE)
   add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g)
   add_link_options(-fsanitize=address,undefined)
@@ -67,7 +71,6 @@ endif()
 
 # Fuzz targets: always built as standalone replay/mutation drivers (also usable with AFL++);
 # with -DPNGFAST_LIBFUZZER=ON (clang) additionally as libFuzzer binaries.
-option(PNGFAST_LIBFUZZER "Build libFuzzer fuzz targets (clang)" OFF)
 if(PNGFAST_BUILD_TESTS OR PNGFAST_LIBFUZZER)
   foreach(t decode roundtrip)
     add_executable(fuzz_${t} fuzz/fuzz_${t}.c fuzz/standalone.c)
