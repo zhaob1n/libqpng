@@ -72,5 +72,19 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   fuzz_decode 75 s = 2.39M execs, cov 883, no findings; fuzz_roundtrip 45 s = 45K execs, cov 1713, no findings.
 * ctest incl. roundtrip_corpus (160-file format corpus, 13 encoder variants each): 6/6 pass.
 
+## 22:14-22:40  final matrices (bench/results/final/, summarised in README "Results")
+* Load 1.2-1.7 during the long runs (other agents), 0.2-1.2 for the graphics decode re-run.
+* Decode: pngfast IMAGERS beats image-rs in every group (ALL 336 vs 226 MB/s; photo g8 2.3x, ga8 1.6x);
+  RAW beats png IDENTITY in every group at low load. Cleaned decoder = v3 prototype or better (quiet run).
+* Encode: FASTEST/FAST/DEFAULT/BEST vs png Fastest/Fast/Balanced/High (miniz + zlib-rs): photos dominated
+  (faster and smaller) except FASTEST p8 speed (-11%) and BEST p8 speed vs zlib-rs High (7 vs 11 MB/s).
+  Graphics losses listed in README "Where the png crate still wins".
+* Raw deflate: run-only 693 MB/s @ 1.832 vs fdeflate UltraFast 518 @ 1.594; inflate +21% vs fdeflate.
+
 ## Open / TODO
-* Faster FASTEST on graphics (fixed-code single pass like fdeflate UltraFast) if needed.
+* FASTEST on graphics: single-pass writer with a predicted (previous-block) Huffman code to skip the
+  histogram pass, or an fdeflate-style fixed code for high-ratio blocks.
+* DEFAULT on graphics vs zlib-rs Balanced: cheaper filter trial (row-sampled probe) and a faster
+  lazy matcher tuned for synthetic content; alpha graphics parsing gap vs zlib-9 (BEST).
+* BEST p8 photos: L10 is slow (7 MB/s); a level-9/10 hybrid could match zlib-rs High speed.
+* Optional: 3-4 literals per decode lookup; non-x86 (NEON) kernels (build currently #errors on non-x86-64).
