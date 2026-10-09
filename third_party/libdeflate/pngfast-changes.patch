@@ -1,7 +1,6 @@
-diff --git a/lib/decompress_template.h b/lib/decompress_template.h
-index 8c874c3..2c45fab 100644
---- a/lib/decompress_template.h
-+++ b/lib/decompress_template.h
+diff -ru a/lib/decompress_template.h b/lib/decompress_template.h
+--- a/lib/decompress_template.h	2026-10-09 21:46:36.877127481 +0800
++++ b/lib/decompress_template.h	2026-10-09 21:46:36.885127493 +0800
 @@ -44,13 +44,17 @@
  static ATTRIBUTES MAYBE_UNUSED enum libdeflate_result
  FUNCNAME(struct libdeflate_decompressor * restrict d,
@@ -22,7 +21,7 @@ index 8c874c3..2c45fab 100644
  
  	/* Input bitstream state; see deflate_decompress.c for documentation */
  	const u8 *in_next = in;
-@@ -332,6 +336,12 @@ next_block:
+@@ -332,6 +336,12 @@
  	SAFETY_CHECK(build_litlen_decode_table(d, num_litlen_syms, num_offset_syms));
  have_decode_tables:
  	litlen_tablemask = BITMASK(d->litlen_tablebits);
@@ -35,7 +34,7 @@ index 8c874c3..2c45fab 100644
  
  	/*
  	 * This is the "fastloop" for decoding literals and matches.  It does
-@@ -387,20 +397,20 @@ have_decode_tables:
+@@ -387,20 +397,20 @@
  							 DEFLATE_MAX_LITLEN_CODEWORD_LEN,
  							 LITLEN_TABLEBITS)) {
  				/* 1st extra fast literal */
@@ -60,7 +59,7 @@ index 8c874c3..2c45fab 100644
  					if (entry & HUFFDEC_LITERAL) {
  						/*
  						 * Another fast literal, but
-@@ -408,10 +418,10 @@ have_decode_tables:
+@@ -408,10 +418,10 @@
  						 * primary item, so it doesn't
  						 * count as one of the extras.
  						 */
@@ -73,7 +72,7 @@ index 8c874c3..2c45fab 100644
  						continue;
  					}
  				}
-@@ -426,10 +436,10 @@ have_decode_tables:
+@@ -426,10 +436,10 @@
  				 */
  				STATIC_ASSERT(CAN_CONSUME_AND_THEN_PRELOAD(
  						LITLEN_TABLEBITS, LITLEN_TABLEBITS));
@@ -86,7 +85,7 @@ index 8c874c3..2c45fab 100644
  				continue;
  			}
  		}
-@@ -669,6 +679,8 @@ have_decode_tables:
+@@ -669,6 +679,8 @@
  			} while (dst < out_next);
  		}
  	} while (in_next < in_fastloop_end && out_next < out_fastloop_end);
@@ -95,7 +94,7 @@ index 8c874c3..2c45fab 100644
  
  	/*
  	 * This is the generic loop for decoding literals and matches.  This
-@@ -697,6 +709,11 @@ generic_loop:
+@@ -697,6 +709,11 @@
  		}
  		length = entry >> 16;
  		if (entry & HUFFDEC_LITERAL) {
@@ -107,11 +106,10 @@ index 8c874c3..2c45fab 100644
  			if (unlikely(out_next == out_end))
  				return LIBDEFLATE_INSUFFICIENT_SPACE;
  			*out_next++ = length;
-diff --git a/lib/deflate_compress.c b/lib/deflate_compress.c
-index b24087c..03a678d 100644
---- a/lib/deflate_compress.c
-+++ b/lib/deflate_compress.c
-@@ -466,6 +466,12 @@ struct libdeflate_compressor {
+diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
+--- a/lib/deflate_compress.c	2026-10-09 21:46:36.889127499 +0800
++++ b/lib/deflate_compress.c	2026-10-09 21:46:36.889127499 +0800
+@@ -466,6 +466,12 @@
  	/* Anything of this size or less we won't bother trying to compress. */
  	size_t max_passthrough_size;
  
@@ -124,7 +122,7 @@ index b24087c..03a678d 100644
  	/*
  	 * The maximum search depth: consider at most this many potential
  	 * matches at each position
-@@ -536,6 +542,13 @@ struct libdeflate_compressor {
+@@ -536,6 +542,13 @@
  
  		} f; /* (f)astest */
  
@@ -138,11 +136,10 @@ index b24087c..03a678d 100644
  	#if SUPPORT_NEAR_OPTIMAL_PARSING
  		/* Data for near-optimal parsing */
  		struct {
-@@ -2522,6 +2535,247 @@ deflate_compress_fastest(struct libdeflate_compressor * restrict c,
- 	} while (in_next != in_end && !os->overflow);
+@@ -2523,6 +2536,266 @@
  }
  
-+/*
+ /*
 + * png-fast: an fdeflate-style compressor for PNG filtered scanlines (and other
 + * literal-heavy data).  Ideas taken from fdeflate's level 1:
 + *  - run-length matches (offset 1) whenever 5 equal bytes are seen, extended
@@ -262,7 +259,7 @@ index b24087c..03a678d 100644
 +	u32 litcost8 = 64;
 +
 +	memset(tab, 0, sizeof(c->p.pf.tab));
-+	if (minlen < 8) {
++	if (minlen != 0 && minlen < 8) {
 +		/* initial literal-cost estimate: order-0 entropy of a prefix */
 +		u32 h[256];
 +
@@ -282,10 +279,29 @@ index b24087c..03a678d 100644
 +		deflate_begin_sequences(c, seq);
 +		while (ip < max_block_end && ip < in_limit &&
 +		       seq < &c->p.pf.sequences[FAST_SEQ_STORE_LENGTH]) {
-+			const u64 v = get_unaligned_le64(ip);
++			u64 v = get_unaligned_le64(ip);
 +			const u8 *ms;
 +			u32 len, off;
 +
++			if (minlen == 0) {
++				/*
++				 * run-only mode: test the 4 start positions ip..ip+3
++				 * for a run of 5 equal bytes at once (SWAR).
++				 */
++				const u64 lo7 = 0x7f7f7f7f7f7f7f7fULL;
++				const u64 z = v ^ (v >> 8);
++				u64 m = ~(((z & lo7) + lo7) | z | lo7);
++
++				m &= m >> 8;
++				m &= m >> 16;
++				m &= 0x80808080ULL;
++				if (!m) {
++					ip += 4 + ((ip - lit_start) >> shift);
++					continue;
++				}
++				ip += bsf64(m) >> 3;
++				v = get_unaligned_le64(ip);
++			}
 +			if ((u32)v == (u32)(v >> 8)) {
 +				/* 5 equal bytes: run-length match at offset 1 */
 +				const u8 b = *ip;
@@ -367,7 +383,7 @@ index b24087c..03a678d 100644
 +		pngf_count_literals(c->freqs.litlen, block_begin, c->p.pf.sequences);
 +		deflate_finish_block(c, os, block_begin, block_end - block_begin,
 +				     c->p.pf.sequences, block_end == in_end);
-+		if (minlen < 8) {
++		if (minlen != 0 && minlen < 8) {
 +			/* literal cost under this block's actual code */
 +			u64 tot = 0, bits = 0;
 +			unsigned i;
@@ -383,10 +399,11 @@ index b24087c..03a678d 100644
 +	} while (in_next != in_end && !os->overflow);
 +}
 +
- /*
++/*
   * This is the "greedy" DEFLATE compressor. It always chooses the longest match.
   */
-@@ -3892,6 +4146,28 @@ libdeflate_alloc_compressor_ex(int compression_level,
+ static void
+@@ -3892,6 +4165,28 @@
  	if (compression_level == -1)
  		compression_level = 6;
  
@@ -415,7 +432,7 @@ index b24087c..03a678d 100644
  	if (compression_level < 0 || compression_level > 12)
  		return NULL;
  
-@@ -4133,3 +4409,21 @@ libdeflate_deflate_compress_bound(struct libdeflate_compressor *c,
+@@ -4133,3 +4428,22 @@
  	 */
  	return (5 * max_blocks) + in_nbytes;
  }
@@ -434,14 +451,14 @@ index b24087c..03a678d 100644
 +LIBDEFLATEAPI void
 +libdeflate_set_png_min_match(struct libdeflate_compressor *c, unsigned min_len)
 +{
-+	if (c->impl == deflate_compress_png_fast && min_len >= 4 && min_len <= 8)
++	if (c->impl == deflate_compress_png_fast &&
++	    (min_len == 0 || (min_len >= 4 && min_len <= 8)))
 +		c->png_min_hash_len = min_len;
 +}
-diff --git a/lib/deflate_decompress.c b/lib/deflate_decompress.c
-index d5af5eb..f8c5137 100644
---- a/lib/deflate_decompress.c
-+++ b/lib/deflate_decompress.c
-@@ -278,7 +278,7 @@ do {									\
+diff -ru a/lib/deflate_decompress.c b/lib/deflate_decompress.c
+--- a/lib/deflate_decompress.c	2026-10-09 21:46:36.893127506 +0800
++++ b/lib/deflate_decompress.c	2026-10-09 21:46:36.893127506 +0800
+@@ -278,7 +278,7 @@
   * be included for the intentional overrun in the match copy implementation.
   */
  #define FASTLOOP_MAX_BYTES_WRITTEN	\
@@ -450,7 +467,7 @@ index d5af5eb..f8c5137 100644
  
  /*
   * This is the worst-case maximum number of input bytes that are read during
-@@ -369,8 +369,11 @@ do {									\
+@@ -369,8 +369,11 @@
   */
  #define PRECODE_TABLEBITS	7
  #define PRECODE_ENOUGH		128	/* enough 19 7 7	*/
@@ -464,7 +481,7 @@ index d5af5eb..f8c5137 100644
  #define OFFSET_TABLEBITS	8
  #define OFFSET_ENOUGH		402	/* enough 32 8 15	*/
  
-@@ -428,6 +431,17 @@ static const u32 precode_decode_results[] = {
+@@ -428,6 +431,17 @@
  /* Indicates an end-of-block entry in the litlen decode table */
  #define HUFFDEC_END_OF_BLOCK		0x00002000
  
@@ -482,7 +499,7 @@ index d5af5eb..f8c5137 100644
  /* Maximum number of bits that can be consumed by decoding a match length */
  #define LENGTH_MAXBITS		(DEFLATE_MAX_LITLEN_CODEWORD_LEN + \
  				 DEFLATE_MAX_EXTRA_LENGTH_BITS)
-@@ -674,6 +688,14 @@ struct libdeflate_decompressor {
+@@ -674,6 +688,14 @@
  
  	/* The free() function for this struct, chosen at allocation time */
  	free_func_t free_func;
@@ -497,7 +514,7 @@ index d5af5eb..f8c5137 100644
  };
  
  /*
-@@ -1023,25 +1045,91 @@ build_precode_decode_table(struct libdeflate_decompressor *d)
+@@ -1023,25 +1045,91 @@
  				  NULL);
  }
  
@@ -598,7 +615,7 @@ index d5af5eb..f8c5137 100644
  }
  
  /* Build the decode table for the offset code.  */
-@@ -1206,3 +1294,31 @@ libdeflate_free_decompressor(struct libdeflate_decompressor *d)
+@@ -1206,3 +1294,31 @@
  	if (d)
  		d->free_func(d);
  }
@@ -630,15 +647,13 @@ index d5af5eb..f8c5137 100644
 +	d->pair_tablebits = on >= 2 ? 11 : LITLEN_TABLEBITS;	/* on==2: pairs with the stock 11-bit table (A/B) */
 +	d->static_codes_loaded = false;
 +}
-diff --git a/libdeflate.h b/libdeflate.h
-index 1821acd..575d90f 100644
---- a/libdeflate.h
-+++ b/libdeflate.h
-@@ -59,6 +59,21 @@ struct libdeflate_options;
- LIBDEFLATEAPI struct libdeflate_compressor *
+diff -ru a/libdeflate.h b/libdeflate.h
+--- a/libdeflate.h	2026-10-09 21:46:36.897127512 +0800
++++ b/libdeflate.h	2026-10-09 21:46:36.897127512 +0800
+@@ -60,6 +60,22 @@
  libdeflate_alloc_compressor(int compression_level);
  
-+/*
+ /*
 + * png-fast fork: pass LIBDEFLATE_PNG_FAST_LEVEL as the compression level (to
 + * libdeflate_alloc_compressor[_ex]) to get the fdeflate-style compressor tuned
 + * for PNG filtered scanlines (RLE + >=8-byte hashed matches + literal skip-ahead).
@@ -649,14 +664,16 @@ index 1821acd..575d90f 100644
 +libdeflate_set_png_params(struct libdeflate_compressor *compressor,
 +			  unsigned block_len, unsigned skip_shift);
 +
-+/* png-fast only: minimum hashed match length, 4..8 (default 8; 4-6 help smooth photos, cost speed). */
++/* png-fast only: minimum hashed match length, 4..8 (default 8; 4-6 help smooth photos, cost speed);
++ * 0 = run-only mode (offset-1 runs + literals, no hash table probes). */
 +LIBDEFLATEAPI void
 +libdeflate_set_png_min_match(struct libdeflate_compressor *compressor, unsigned min_len);
 +
- /*
++/*
   * Like libdeflate_alloc_compressor(), but adds the 'options' argument.
   */
-@@ -251,6 +266,19 @@ libdeflate_deflate_decompress(struct libdeflate_decompressor *decompressor,
+ LIBDEFLATEAPI struct libdeflate_compressor *
+@@ -251,6 +267,19 @@
   * then the actual compressed size of the DEFLATE stream (aligned to the next
   * byte boundary) is written to *actual_in_nbytes_ret.
   */
