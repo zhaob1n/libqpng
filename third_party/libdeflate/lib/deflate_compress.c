@@ -2675,10 +2675,29 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 		deflate_begin_sequences(c, seq);
 		while (ip < max_block_end && ip < in_limit &&
 		       seq < &c->p.pf.sequences[FAST_SEQ_STORE_LENGTH]) {
-			const u64 v = get_unaligned_le64(ip);
+			u64 v = get_unaligned_le64(ip);
 			const u8 *ms;
 			u32 len, off;
 
+			if (minlen == 0) {
+				/*
+				 * run-only mode: test the 4 start positions ip..ip+3
+				 * for a run of 5 equal bytes at once (SWAR).
+				 */
+				const u64 lo7 = 0x7f7f7f7f7f7f7f7fULL;
+				const u64 z = v ^ (v >> 8);
+				u64 m = ~(((z & lo7) + lo7) | z | lo7);
+
+				m &= m >> 8;
+				m &= m >> 16;
+				m &= 0x80808080ULL;
+				if (!m) {
+					ip += 4 + ((ip - lit_start) >> shift);
+					continue;
+				}
+				ip += bsf64(m) >> 3;
+				v = get_unaligned_le64(ip);
+			}
 			if ((u32)v == (u32)(v >> 8)) {
 				/* 5 equal bytes: run-length match at offset 1 */
 				const u8 b = *ip;
@@ -2710,10 +2729,6 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 				len = MIN(len, DEFLATE_MAX_MATCH_LEN);
 				len = MIN(len, (u32)(in_end - ms));
 				off = 1;
-			} else if (minlen == 0) {
-				/* run-only mode: no hashed matches */
-				ip += 1 + ((ip - lit_start) >> shift);
-				continue;
 			} else {
 				const u32 pos = ip - in;
 				const u64 vm = v & hmask;

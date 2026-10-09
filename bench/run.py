@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""
+Reproducible pngfast-vs-Rust benchmark driver.
+
+  bench/run.py encode  [--rounds N] [--reps N] [--cpu C] [--configs a,b,..] [--out results.csv]
+  bench/run.py decode  ...
+  bench/run.py deflate ...   (raw zlib streams: pngfast's libdeflate vs fdeflate)
+
+Method: checks box load first (refuses to start if the 1-min load average is
+above --max-load unless --force), pins every process to one core (taskset),
+runs all configurations in rotating order per round (A B C, B C A, ...),
+keeps every timed rep, and reports per-file medians aggregated per group as
+MB/s of *raw image bytes* (decoded size) plus compression ratio
+(raw / encoded).  1 untimed warm-up rep per file inside each tool.
+"""
+import argparse, collections, csv, io, os, re, statistics as st, subprocess, sys, time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PFBENCH = os.environ.get("PFBENCH", os.path.join(ROOT, "build", "pfbench"))
+RSREF = os.environ.get("RSREF", os.path.join(ROOT, "tools/rsref/target/release/rsref"))
+RSREF_Z = os.environ.get("RSREF_ZLIBRS", os.path.join(ROOT, "tools/rsref/target-zlibrs/release/rsref"))
+CORPUS = os.environ.get("PNGFAST_CORPUS", "/workspace/image-bench/png-next/images/formats")
+RAWDIR = os.environ.get("PNGFAST_RAW", "/workspace/deflate-bench/data")
+
+# label -> argv prefix (files appended).  {R} = reps.
+ENCODE = {
+    "png-fastest":      [RSREF, "bench-encode", "fastest", "{R}"],
+    "png-fast":         [RSREF, "bench-encode", "fast", "{R}"],
+    "png-balanced":     [RSREF, "bench-encode", "balanced", "{R}"],
+    "png-high":         [RSREF, "bench-encode", "high", "{R}"],
+    "pngz-balanced":    [RSREF_Z, "bench-encode", "balanced", "{R}"],
+    "pngz-high":        [RSREF_Z, "bench-encode", "high", "{R}"],
+    "pf-fastest":       [PFBENCH, "encode", "fastest", "{R}"],
+    "pf-fast":          [PFBENCH, "encode", "fast", "{R}"],
+    "pf-default":       [PFBENCH, "encode", "default", "{R}"],
+    "pf-best":          [PFBENCH, "encode", "best", "{R}"],
+}
+DECODE = {
+    "imagers":     [RSREF, "bench-decode", "imagers", "{R}"],
+    "png-raw":     [RSREF, "bench-decode", "raw", "{R}"],
+    "pf-imagers":  [PFBENCH, "decode", "imagers", "{R}"],
+    "pf-raw":      [PFBENCH, "decode", "raw", "{R}"],
+}
+DEFLATE = {
+    "fdeflate-ultrafast": [RSREF, "bench-deflate", "ultrafast", "{R}"],
+    "fdeflate-rle":       [RSREF, "bench-deflate", "rle", "{R}"],
+    "fdeflate-1":         [RSREF, "bench-deflate", "1", "{R}"],
+    "fdeflate-6":         [RSREF, "bench-deflate", "6", "{R}"],
+    "pf-rle":             [PFBENCH, "deflate", "pfrle", "{R}"],
+    "pf-fast":            [PFBENCH, "deflate", "pf", "{R}"],
+    "pf-6":               [PFBENCH, "deflate", "6", "{R}"],
+}
+
+FMT_GROUPS = [("rgb8", r"\.rgb8t?\."), ("rgba8", r"\.rgba8\."), ("ga8", r"\.ga8\."),
+              ("g8", r"\.g8t?\."), ("p8", r"\.p8t?\."), ("sub8", r"\.(g|p)[124]\."),
+              ("16bit", r"\.(g16t?|ga16|rgb16t?|rgba16)\.")]
+
+def content(f):
+    b = os.path.basename(f)
+    return "graphics" if b.startswith(("screenshot", "graphics")) else "photo"
+
+def group_of(f, mode):
+    if mode == "deflate":
+        return "graphics" if "screen" in f else "photo"
+    for g, rx in FMT_GROUPS:
+        if re.search(rx, os.path.basename(f)):
+            return f"{content(f)}/{g}"
+    return None
+
+def load_ok(max_load):
+    la = os.getloadavg()[0]
+    return la, la <= max_load
+
+def run(argv, reps, files, cpu):
+    argv = [a.replace("{R}", str(reps)) for a in argv]
+    out = subprocess.run(["taskset", "-c", str(cpu)] + argv + files,
+                         check=True, capture_output=True, text=True).stdout
+    return list(csv.reader(io.StringIO(out)))
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mode", choices=["encode", "decode", "deflate"])
+    ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--reps", type=int, default=3)
+    ap.add_argument("--cpu", type=int, default=3)
+    ap.add_argument("--configs", default="")
+    ap.add_argument("--files", default="", help="regex filter on file names")
+    ap.add_argument("--interlaced", action="store_true", help="decode: include .i.png")
+    ap.add_argument("--max-load", type=float, default=2.5)
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--out", default="")
+    a = ap.parse_args()
+
+    table = {"encode": ENCODE, "decode": DECODE, "deflate": DEFLATE}[a.mode]
+    cfgs = [c for c in (a.configs.split(",") if a.configs else table)]
+    if a.mode == "deflate":
+        files = sorted([f"{RAWDIR}/png/{f}" for f in os.listdir(f"{RAWDIR}/png") if f.endswith(".idat")] +
+                       [f"{RAWDIR}/png-screen/{f}" for f in os.listdir(f"{RAWDIR}/png-screen") if f.endswith(".filt")])
+    else:
+        files = sorted(os.path.join(CORPUS, f) for f in os.listdir(CORPUS) if f.endswith(".png")
+                       and (a.interlaced or a.mode == "decode" and a.interlaced or ".i." not in f))
+    if a.files:
+        files = [f for f in files if re.search(a.files, f)]
+    files = [f for f in files if group_of(f, a.mode)]
+
+    la, ok = load_ok(a.max_load)
+    print(f"# load average {la:.2f} at start ({time.strftime('%Y-%m-%d %H:%M %Z')}), cpu {a.cpu}", file=sys.stderr)
+    if not ok and not a.force:
+        sys.exit(f"box busy (load {la:.2f} > {a.max_load}); retry later or --force")
+
+    # raw (decoded) size per file
+    raw = {}
+    if a.mode == "deflate":
+        raw = {f: os.path.getsize(f) for f in files}
+    else:
+        for r in run([PFBENCH, "decode", "raw", "1"], 1, files, a.cpu):
+            raw[r[3]] = int(r[8])
+
+    ns = collections.defaultdict(list)   # (cfg, file) -> [ns]
+    size = {}                            # (cfg, file) -> encoded bytes
+    rows = []
+    for rd in range(a.rounds):
+        order = cfgs[rd % len(cfgs):] + cfgs[:rd % len(cfgs)]
+        la, _ = load_ok(a.max_load)
+        print(f"# round {rd+1}/{a.rounds} load {la:.2f}", file=sys.stderr)
+        for c in order:
+            for r in run(table[c], a.reps, files, a.cpu):
+                ns[(c, r[3])].append(int(r[7]))
+                size[(c, r[3])] = int(r[8])
+                rows.append([c] + r)
+    if a.out:
+        with open(a.out, "w", newline="") as fh:
+            csv.writer(fh).writerows(rows)
+
+    groups = sorted({group_of(f, a.mode) for f in files})
+    print(f"\n{a.mode}: MB/s of raw bytes (sum raw / sum per-file median)" +
+          (", ratio = raw/encoded" if a.mode != "decode" else ""))
+    hdr = "| group | " + " | ".join(cfgs) + " |"
+    print(hdr); print("|" + "---|" * (len(cfgs) + 1))
+    for g in groups + ["ALL"]:
+        fs = [f for f in files if g == "ALL" or group_of(f, a.mode) == g]
+        cells = []
+        for c in cfgs:
+            t = sum(st.median(ns[(c, f)]) for f in fs)
+            rb = sum(raw[f] for f in fs)
+            cell = f"{rb / t * 1e3:.0f}"
+            if a.mode != "decode":
+                cell += f" @ {rb / sum(size[(c, f)] for f in fs):.3f}"
+            cells.append(cell)
+        print(f"| {g} | " + " | ".join(cells) + " |")
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,6 @@
 //! rsref: reference + benchmark tool for the Rust side (png crate git, image-rs, fdeflate).
 //!   rsref decode MODE in.png out.raw         MODE = raw (png IDENTITY) | expand (png EXPAND) | imagers (image-rs)
-//!   rsref encode PRESET in.png out.png       PRESET = fastest|fast|balanced|high (png crate presets, default filters)
+//!   rsref encode SPEC in.png out.png         SPEC = PRESET[:FILTER[:DEFLATE]] (see encode_png)
 //!   rsref bench-decode MODE REPS files...    CSV: tool,op,param,file,rep,width,height,ns,bytes
 //!   rsref bench-encode PRESET REPS files...  source PNG decoded (IDENTITY) untimed, then encoded with same format
 //!   rsref bench-deflate LEVEL REPS files...  fdeflate raw zlib compress (LEVEL 1..9 | rle | ultrafast), bytes = out
@@ -38,12 +38,28 @@ fn load_src(data: &[u8]) -> Src {
     Src { w: fi.width, h: fi.height, ct: info.color_type, bd: info.bit_depth, px,
           pal: info.palette.as_ref().map(|p| p.to_vec()), trns: info.trns.as_ref().map(|t| t.to_vec()) }
 }
-fn encode_png(s: &Src, preset: &str) -> Vec<u8> {
+/// PRESET[:FILTER[:DEFLATE]]  PRESET = fastest|fast|balanced|high,
+/// FILTER = none|sub|up|avg|paeth|adaptive|minentropy, DEFLATE = ultrafast|1..9
+fn encode_png(s: &Src, spec: &str) -> Vec<u8> {
+    let mut it = spec.split(':');
+    let preset = it.next().unwrap_or("balanced");
     let mut dest = Vec::new();
     let cl = match preset { "fastest" => png::Compression::Fastest, "fast" => png::Compression::Fast,
-                            "high" => png::Compression::High, _ => png::Compression::Balanced };
+                            "high" => png::Compression::High, "none" => png::Compression::NoCompression,
+                            _ => png::Compression::Balanced };
     let mut enc = png::Encoder::new(&mut dest, s.w, s.h);
     enc.set_color(s.ct); enc.set_depth(s.bd); enc.set_compression(cl);
+    if let Some(f) = it.next() {
+        if !f.is_empty() {
+            enc.set_filter(match f { "none" => png::Filter::NoFilter, "sub" => png::Filter::Sub, "up" => png::Filter::Up,
+                "avg" => png::Filter::Avg, "paeth" => png::Filter::Paeth, "minentropy" => png::Filter::MinEntropy,
+                _ => png::Filter::Adaptive });
+        }
+    }
+    if let Some(d) = it.next() {
+        enc.set_deflate_compression(if d == "ultrafast" { png::DeflateCompression::FdeflateUltraFast }
+                                    else { png::DeflateCompression::Level(d.parse().unwrap()) });
+    }
     if let Some(p) = &s.pal { enc.set_palette(p.clone()); }
     if let Some(t) = &s.trns { enc.set_trns(t.clone()); }
     enc.write_header().unwrap().write_image_data(&s.px).unwrap();
@@ -81,7 +97,7 @@ fn main() {
                     match cmd {
                         "bench-decode" => { let t = Instant::now(); let (pw, ph, px) = decode_png(&data, param); ns = t.elapsed().as_nanos(); w = pw; h = ph; bytes = px.len(); }
                         "bench-encode" => { let s = src.as_ref().unwrap(); let t = Instant::now(); let out = encode_png(s, param); ns = t.elapsed().as_nanos(); w = s.w; h = s.h; bytes = out.len();
-                                            if r == reps { if let Ok(dir) = std::env::var("DUMP_DIR") { std::fs::write(format!("{dir}/{}.{tool}-{param}.png", file.rsplit('/').next().unwrap()), &out).unwrap(); } } }
+                                            if r == reps { if let Ok(dir) = std::env::var("DUMP_DIR") { std::fs::write(format!("{dir}/{}.{tool}-{}.png", file.rsplit('/').next().unwrap(), param.replace(':', "_")), &out).unwrap(); } } }
                         _ => {
                             let t = Instant::now();
                             let out = match param {
