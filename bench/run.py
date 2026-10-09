@@ -54,6 +54,10 @@ DEFLATE = {
     "pf-6":               [PFBENCH, "deflate", "6", "{R}"],
 }
 
+# optional (only via --configs): previous prototype, to check the cleaned-up decoder for regressions
+V3 = os.environ.get("PNGNEXT3", "/workspace/image-bench/png-next/bin/pngnext3")
+EXTRA_DECODE = {"v3-imagers": [V3, "v3", "decode-pngfast3", str(3 << 20), "{R}"]}
+
 INFLATE = {
     "fdeflate":        [RSREF, "bench-inflate", "-", "{R}"],
     "libdeflate":      [PFBENCH, "inflate", "stock", "{R}"],
@@ -107,7 +111,9 @@ def main():
     a = ap.parse_args()
 
     table = {"encode": ENCODE, "decode": DECODE, "deflate": DEFLATE, "inflate": INFLATE}[a.mode]
-    cfgs = [c for c in (a.configs.split(",") if a.configs else table)]
+    if a.mode == "decode":
+        table = {**table, **EXTRA_DECODE}
+    cfgs = [c for c in (a.configs.split(",") if a.configs else table if a.mode != "decode" else DECODE)]
     if a.mode == "inflate":
         files = sorted(f"{RAWDIR}/png/{f.split('.idat.')[0]}.idat:{STREAMS}/{f}" for f in os.listdir(STREAMS)
                        if f.endswith(".zlib"))

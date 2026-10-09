@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
+# -O2, not CMake's default -O3: -O3 measured 20-30% slower on the decoder's 2-row wavefront kernels
+# (photo ga8/g8 decode), encoder unchanged. Set before project() so it becomes the cached default.
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "Release C flags")
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
+endif()
 project(pngfast VERSION 1.0.0 LANGUAGES C)
 
 option(PNGFAST_BUILD_TESTS "Build tests" ON)
