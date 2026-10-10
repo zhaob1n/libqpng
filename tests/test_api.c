@@ -42,6 +42,25 @@ int main(void) {
     CHECK(pf_encode(px, 0, 2, 0, PF_COLOR_RGB, 8, NULL, &png, &pn) == PF_ERR_ARGUMENT);
     CHECK(pf_encode(px, 3, 2, 5, PF_COLOR_RGB, 8, NULL, &png, &pn) == PF_ERR_ARGUMENT);       /* stride < row */
     CHECK(pf_decode(NULL, 0, NULL, &im) == PF_ERR_ARGUMENT);
+    {   /* deflate backend options */
+        pf_encode_options e; pf_encode_options_init(&e);
+        CHECK(e.backend == PF_BACKEND_AUTO && e.zlib_strategy == PF_ZSTRATEGY_DEFAULT);
+        CHECK(pf_backend_available(PF_BACKEND_AUTO) && pf_backend_available(PF_BACKEND_LIBDEFLATE));
+        e.backend = 3; CHECK(pf_encode(px, 3, 2, 0, PF_COLOR_RGB, 8, &e, &png, &pn) == PF_ERR_ARGUMENT);
+        e.backend = PF_BACKEND_AUTO; e.zlib_strategy = 4;
+        CHECK(pf_encode(px, 3, 2, 0, PF_COLOR_RGB, 8, &e, &png, &pn) == PF_ERR_ARGUMENT);
+        e.zlib_strategy = 0; e.backend = PF_BACKEND_ZLIBNG;
+        if (pf_backend_available(PF_BACKEND_ZLIBNG)) {
+            e.deflate_level = 10; CHECK(pf_encode(px, 3, 2, 0, PF_COLOR_RGB, 8, &e, &png, &pn) == PF_ERR_ARGUMENT);
+            e.deflate_level = PF_DEFLATE_PNGFAST; CHECK(pf_encode(px, 3, 2, 0, PF_COLOR_RGB, 8, &e, &png, &pn) == PF_ERR_ARGUMENT);
+            e.deflate_level = 9; e.zlib_strategy = PF_ZSTRATEGY_RLE; e.allocator = &al;   /* zlib-ng uses the hooks */
+            const size_t a0 = (size_t)total_allocs;
+            CHECK(pf_encode(px, 3, 2, 0, PF_COLOR_RGB, 8, &e, &png, &pn) == PF_OK);
+            CHECK(live == 1 && total_allocs > a0 + 2); pf_buffer_free(png, &al); CHECK(live == 0);
+        } else {
+            CHECK(pf_encode(px, 3, 2, 0, PF_COLOR_RGB, 8, &e, &png, &pn) == PF_ERR_UNSUPPORTED);
+        }
+    }
     CHECK(strcmp(pf_status_string(PF_ERR_CRC), "chunk CRC mismatch") == 0);
     /* stride > row bytes + every preset on a padded buffer */
     uint8_t padded[2 * 32]; memset(padded, 0xAB, sizeof padded); memcpy(padded, px, 9); memcpy(padded + 32, px + 9, 9);

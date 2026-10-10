@@ -25,14 +25,13 @@ static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uin
  *           2. opaque graphics: same sample with filter None (4% allowance at depth <= 8), keep the winner;
  *              alpha graphics keep the Up-biased adaptive filter; photos: adaptive + png-fast over the image,
  *              8-bit palette photos also try Paeth.
- *           3. graphics: alpha 8-bit L8/48/258, None-filtered 8-bit RGB L4/4/16, other RGB L5/8/32, else L5;
- *              16-bit photos: also L6, keep the smaller; other photos: keep the png-fast stream.
- *  BEST     steps 1-2, then graphics: L10/48/96 (bounded near-optimal) for alpha or 16-bit, else L9;
- *           photos: L8, keeping the png-fast stream if smaller.
+ *           3. graphics: zlib-ng level 6 (libdeflate-only builds: tuned libdeflate L4-L8, see graphics_cfg);
+ *              16-bit photos: also libdeflate L6, keep the smaller; other photos: keep the png-fast stream.
+ *  BEST     steps 1-2, then graphics: zlib-ng level 9, chain 1024 (libdeflate-only: L10/48/96 or L9);
+ *           photos: libdeflate L8, keeping the png-fast stream if smaller.
+ * Backend choice per stream: graphics_cfg / photo_cfg (deflate_backend.h); pf_encode_options.backend forces one.
  * An explicit filter or deflate_level in pf_encode_options disables the probing.
  */
-#define GRAPHICS_RATIO 6
-
 #define GRAPHICS_RATIO 6
 
 /* content class from the probe, used by the backend policy */
@@ -51,6 +50,15 @@ static pf_zcfg graphics_cfg(const pf_content *c, int backend, int zlevel, int zs
       if (e && sscanf(e, "%d:%d:%d:%d:%d:%d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) >= 2)
           return pf__zcfg(v[0], v[1], v[2], v[3], v[4], v[5]); }
 #endif
+    if (backend == PF_BACKEND_AUTO && pf__backend_available(PF_BACKEND_ZLIBNG)) {
+        /* zlib-ng on the probed filtering (Phase 4 sweep, 40 graphics files, core 3, medians): level 6
+         * (deflate_medium) is smaller than every libdeflate 4-8 setting below AND 1.1-1.3x faster on 5 of 7 groups;
+         * level 9 with chain 1024 (default 4096) keeps ~98% of level 9's gain at 2x its speed and beats the
+         * libdeflate near-optimal L10 in speed (2-5x) at -1..+6% size. */
+        return c->best ? pf__zcfg(PF_BACKEND_ZLIBNG, 9, 1024, 258, 0, PF_ZSTRATEGY_DEFAULT)
+                       : pf__zcfg(PF_BACKEND_ZLIBNG, 6, 0, 0, 0, PF_ZSTRATEGY_DEFAULT);
+    }
+    /* libdeflate only (PF_BACKEND_LIBDEFLATE or built without zlib-ng): pngfast 1.0 policy */
     if (!c->best) {
         /* alpha 8-bit: lazy2 + long matches; None-filtered 8-bit RGB (flat UI, text = long exact repeats): greedy;
          * other RGB: shallower search; rest: level 5 */

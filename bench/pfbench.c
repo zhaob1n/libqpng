@@ -3,7 +3,7 @@
  *   pfbench encode PRESET[:FILTER[:LEVEL]] REPS file.png...   (source decoded to raw untimed; same format re-encoded)
  *   pfbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh | ultra
  *   pfbench inflate stock|pairs|zng REPS orig:stream.zlib...   (zng: vendored zlib-ng, if built)
- *   PRESET suffixes (encode): "#ld" / "#zng" force the backend; "@B:L:D:N:M:S" sets PF_POLICY (final graphics
+ *   PRESET suffixes (encode): "#ld" / "#zng" force the backend; "@B.L.D.N.M.S" sets PF_POLICY (final graphics
  *   stream: backend, level, depth, nice, minlen, strategy) in builds with -DPF_POLICY_OVERRIDE.
  *   deflate LEVEL "zL" / "zLsS": zlib-ng level L (strategy S).
  * CSV: tool,op,param,file,rep,width,height,ns,bytes. Each timing covers setup + allocation + work; 1 warm-up rep.
@@ -139,8 +139,13 @@ int main(int argc, char **argv) {
             if (strstr(param, "#zng")) o.backend = PF_BACKEND_ZLIBNG;
             if (strstr(param, "#ld")) o.backend = PF_BACKEND_LIBDEFLATE;
             const char *pol = strchr(param, '@');
-            if (pol) setenv("PF_POLICY", pol + 1, 1); else unsetenv("PF_POLICY");
-            const char *c1 = strchr(param, ':');
+            if (pol) {   /* "@B.L.D.N.M.S" (dots: run.py splits configs on commas) */
+                char e[64]; snprintf(e, sizeof e, "%s", pol + 1);
+                for (char *q = e; *q; q++) if (*q == '.') *q = ':';
+                setenv("PF_POLICY", e, 1);
+            } else unsetenv("PF_POLICY");
+            char pp[128]; snprintf(pp, sizeof pp, "%s", param); pp[strcspn(pp, "@#")] = 0;
+            const char *c1 = strchr(pp, ':');
             if (c1) { o.filter = atoi(c1 + 1); const char *c2 = strchr(c1 + 1, ':'); if (c2) { o.deflate_level = deflate_level(c2 + 1) < 0 ? 100 - deflate_level(c2 + 1) : deflate_level(c2 + 1);
                                                                                          o.search_depth = (int)g_depth; o.nice_length = (int)g_nice; } }
             int pl = 0, tl = 0;

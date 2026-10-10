@@ -17,7 +17,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 4) return 0;
     const unsigned f = data[0] % (sizeof FMT / sizeof FMT[0]);
     const uint32_t w = 1 + data[1] % 64, h = 1 + data[2] % 64;
-    const int knob = data[3];
+    const int knob = data[3], knob2 = data[2] ^ data[0];   /* knob2: backend, zlib strategy */
     data += 4; size -= 4;
     const size_t rowbytes = ((size_t)w * FMT[f].ch * FMT[f].d + 7) / 8, n = rowbytes * h;
     uint8_t *px = malloc(n ? n : 1);
@@ -36,6 +36,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     eo.filter = (knob >> 2) % 7 - 1;                                   /* AUTO, NONE..ADAPTIVE */
     static const int levels[] = {0, 0, 0, 1, 6, 9, 12, PF_DEFLATE_PNGFAST, PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH, PF_DEFLATE_PNGULTRA};
     eo.deflate_level = levels[(knob >> 5) % 11];
+    eo.backend = (int)(knob2 % 3);                               /* AUTO, LIBDEFLATE, ZLIBNG */
+    if (eo.backend == PF_BACKEND_ZLIBNG) {
+        if (!pf_backend_available(PF_BACKEND_ZLIBNG)) eo.backend = PF_BACKEND_AUTO;
+        else {
+            if (eo.deflate_level > 9) eo.deflate_level = eo.deflate_level % 9 + 1;
+            eo.zlib_strategy = (int)((knob2 >> 2) & 3);
+        }
+    }
     if (FMT[f].c == PF_COLOR_PALETTE) { eo.palette = pal; eo.palette_entries = 1 << (FMT[f].d < 8 ? FMT[f].d : 7); }
 
     uint8_t *png = NULL; size_t pn = 0;

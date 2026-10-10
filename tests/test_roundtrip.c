@@ -43,11 +43,22 @@ int main(int argc, char **argv) {
         if (o.trns && ((src.color_type == PF_COLOR_GRAY && tl != 2) || (src.color_type == PF_COLOR_RGB && tl != 6) ||
                        (src.color_type == PF_COLOR_PALETTE && tl > o.palette_entries) || src.color_type == PF_COLOR_RGBA ||
                        src.color_type == PF_COLOR_GRAY_ALPHA)) { o.trns = NULL; o.trns_bytes = 0; }
-        for (int v = 0; v < 4 + 6 + 4; v++) {
+        /* variants: 4 presets (AUTO backend), 6 fixed filters, 4 libdeflate levels, 4 presets forced to libdeflate,
+         * then (if built) 4 presets forced to zlib-ng and 5 explicit zlib-ng level / strategy combinations */
+        const int nv = 4 + 6 + 4 + 4 + (pf_backend_available(PF_BACKEND_ZLIBNG) ? 4 + 5 : 0);
+        for (int v = 0; v < nv; v++) {
             pf_encode_options e = o;
             if (v < 4) e.preset = (pf_preset)v;
             else if (v < 10) { e.preset = PF_PRESET_FAST; e.filter = v - 4; }
-            else e.deflate_level = (int[]){ PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH, 1, PF_DEFLATE_PNGULTRA }[v - 10];
+            else if (v < 14) e.deflate_level = (int[]){ PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH, 1, PF_DEFLATE_PNGULTRA }[v - 10];
+            else if (v < 18) { e.preset = (pf_preset)(v - 14); e.backend = PF_BACKEND_LIBDEFLATE; }
+            else if (v < 22) { e.preset = (pf_preset)(v - 18); e.backend = PF_BACKEND_ZLIBNG; }
+            else {
+                static const int zl[5][2] = { { 1, PF_ZSTRATEGY_DEFAULT }, { 4, PF_ZSTRATEGY_FILTERED },
+                                              { 9, PF_ZSTRATEGY_DEFAULT }, { 6, PF_ZSTRATEGY_RLE }, { 3, PF_ZSTRATEGY_HUFFMAN_ONLY } };
+                e.backend = PF_BACKEND_ZLIBNG; e.deflate_level = zl[v - 22][0]; e.zlib_strategy = zl[v - 22][1];
+                e.filter = v & 1 ? PF_FILTER_ADAPTIVE : PF_FILTER_PAETH;
+            }
             uint8_t *png; size_t pn;
             pf_status s = pf_encode(src.pixels, src.width, src.height, src.stride, (pf_color)src.color_type, src.bit_depth, &e, &png, &pn);
             runs++;
