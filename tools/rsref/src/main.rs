@@ -108,7 +108,8 @@ fn main() {
                                 l => { let mut c = fdeflate::Compressor::new(Vec::new(), l.parse().unwrap(), true).unwrap(); c.write_data(&data).unwrap(); c.finish().unwrap() }
                             };
                             ns = t.elapsed().as_nanos(); w = 0; h = 0; bytes = out.len();
-                            if r == reps { let back = fdeflate::decompress_to_vec(&out).unwrap(); assert!(back == data); }
+                            if r == reps { let back = fdeflate::decompress_to_vec(&out).unwrap(); assert!(back == data);
+                                           if let Ok(dir) = std::env::var("DUMP_DIR") { std::fs::write(format!("{dir}/{}.{param}.zlib", file.rsplit('/').next().unwrap()), &out).unwrap(); } }
                         }
                     }
                     if r > 0 { println!("{},{cmd},{param},{file},{r},{w},{h},{ns},{bytes}", if cmd.ends_with("flate") { "fdeflate" } else { tool }); }

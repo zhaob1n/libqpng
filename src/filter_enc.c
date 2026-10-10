@@ -151,11 +151,14 @@ void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0
         const uint8_t *cur = px + (size_t)y * stride, *prev = y ? cur - stride : zrow;
         uint8_t *o = dst + (size_t)(y - y0) * (n + 1);
         int f = mode;
-        if (mode == PF_FILTER_ADAPTIVE) {
+        if (mode == PF_FILTER_ADAPTIVE || mode == PF__FILTER_ADAPTIVE_GFX) {
             uint64_t cost[5];
             if (avx2) costs_avx2(cur, prev, n, bpp, cost); else costs_sse2(cur, prev, n, bpp, cost);
             f = 0;
             for (int k = 1; k < 5; k++) if (cost[k] < cost[f]) f = k;
+            /* graphics: Up whenever it is within 2x of the best residual sum (repeated rows / zero runs
+             * matter more to LZ than small residuals; -3..6% on screenshots, worse on photos) */
+            if (mode == PF__FILTER_ADAPTIVE_GFX && cost[PF_FILTER_UP] <= 2 * cost[f]) f = PF_FILTER_UP;
         }
         o[0] = (uint8_t)f;
         if (avx2) filt_row_avx2(f, o + 1, cur, prev, n, bpp); else filt_row_sse2(f, o + 1, cur, prev, n, bpp);
