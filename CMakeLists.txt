@@ -162,7 +162,7 @@ endif()
 # Fuzz targets: always built as standalone replay/mutation drivers (also usable with AFL++);
 # with -DPNGFAST_LIBFUZZER=ON (clang) additionally as libFuzzer binaries.
 if(PNGFAST_BUILD_TESTS OR PNGFAST_LIBFUZZER)
-  foreach(t decode roundtrip)
+  foreach(t decode roundtrip stream)
     add_executable(fuzz_${t} fuzz/fuzz_${t}.c fuzz/standalone.c)
     target_link_libraries(fuzz_${t} PRIVATE pngfast)
     if(PNGFAST_LIBFUZZER)

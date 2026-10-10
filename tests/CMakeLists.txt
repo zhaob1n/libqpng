@@ -33,6 +33,9 @@ add_test(NAME fuzz_decode_smoke COMMAND fuzz_decode ${SEEDS})
 set_tests_properties(fuzz_decode_smoke PROPERTIES ENVIRONMENT PF_FUZZ_ITERS=300)
 add_test(NAME fuzz_roundtrip_smoke COMMAND fuzz_roundtrip ${SEEDS})
 set_tests_properties(fuzz_roundtrip_smoke PROPERTIES ENVIRONMENT PF_FUZZ_ITERS=40)
+file(GLOB APNG_SEEDS ${DATA}/apng/*.png)
+add_test(NAME fuzz_stream_smoke COMMAND fuzz_stream ${SEEDS} ${APNG_SEEDS})
+set_tests_properties(fuzz_stream_smoke PROPERTIES ENVIRONMENT PF_FUZZ_ITERS=100)
 # symbol hygiene: only the public API may be exported; libpngfast.a must link next to stock zlib-ng / libdeflate
 if(PNGFAST_HIDE_SYMBOLS AND NOT APPLE AND NOT WIN32)
   add_test(NAME symbols COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_symbols.sh ${PROJECT_BINARY_DIR}/pngfast.exports
