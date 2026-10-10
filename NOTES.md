@@ -223,3 +223,15 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   paths). tests/test_apng.c: Philip Taylor's APNG suite (tests/data/apng, 61 files: final frame vs expectation,
   invalid files rejected; 023 checked as raw 229,0,0 since "nearly black" needs gAMA), encode/decode round trip
   vs float reference compositor (max diff <= 1), raw frames, every PngSuite still via the APNG API.
+* Verification (23:00-23:35 box time): ctest 13/13 incl. corpus; scripts/sanitize.sh OK (ASan/UBSan, zlib-ng ON
+  and OFF builds, shared-lib symbols); libFuzzer 90 s each: decode 1.59M runs, roundtrip 105k, stream 1.23M, no
+  crashes; clang -Wall -Wextra: 0 warnings outside third_party; gcc build warnings-clean.
+  png crate cross-check: pf_apng_raw_frame raw pixels + fcTL fields identical to the png crate's for all 41 valid
+  suite files and for a pf_encode_apng file (4 frames, separate default image); the png crate accepts some invalid
+  suite files partially, pngfast rejects them up front (PF_ERR_APNG).
+* Perf (bench/results/phase5, 40 corpus files, core 3, load 0.2-0.6, old = af6c9f5 pfbench alternated):
+  one-shot new/old time geomean: decode imagers 1.03 (1st run), raw 1.000 (4-round re-run), encode fastest 1.003
+  (re-run; the 1.19 of the first run was noise), fast 1.006, default 1.002, best 1.022; sizes identical.
+  Streaming vs one-shot: decode image mode x1.01, row mode (zlib-ng inflate) x1.25; encode fastest x1.06 / +0.3 %
+  size, fast x1.07 / +0.1 %, default x2.5 / +4.9 %, best x1.9 / +5.6 % (one-shot DEFAULT/BEST choose backend and
+  filters per content with whole-image probing; the stream uses zlib-ng 6/9 + per-row adaptive) -> TODO.
