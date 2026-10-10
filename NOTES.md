@@ -138,3 +138,28 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   candidates inside the same run) - the likely real fix for both DEFAULT and BEST on alpha graphics.
   Tried: not inserting the interior of long periodic (offset <= 8) matches into the hash chains: worse
   (+0.3..5%), so chain pollution is not the cause. Open: compare lazy-evaluation decisions token by token.
+
+## Phase 4 (Oct 10, from 20:55) — optional zlib-ng backend
+* Vendored zlib-ng develop f18efb8 (2026-10-07) in third_party/zlib-ng (unmodified; test/ doc/ .github removed;
+  PNGFAST_VENDOR.md). CMake `PNGFAST_WITH_ZLIBNG` (default ON when present): add_subdirectory EXCLUDE_FROM_ALL with
+  ZLIB_COMPAT=OFF, no gz API, runtime CPU detection, objects folded into libpngfast. OFF build: ctest 6/6.
+* src/deflate_backend.{c,h}: pf_zcfg {backend, level, depth, nice, minlen, strategy} + pf__zcompress /
+  pf__zbound / pf__zcompress_ultra_rows. encode.c only picks a pf_zcfg (graphics_cfg / photo_cfg). zlib-ng runs with
+  memLevel 9, the user's allocator hooks, 1 GiB in/out slices (32-bit avail_*); depth/nice via zng_deflateTune.
+* API 1.1: pf_encode_options.backend (AUTO/LIBDEFLATE/ZLIBNG), .zlib_strategy, pf_backend_available().
+  LIBDEFLATE = the 1.0 policy byte for byte (checked: identical totals on the 160-file corpus for all presets).
+* pfbench: PRESET#ld / PRESET#zng, PRESET@B.L.D.N.M.S (PF_POLICY env, builds with -DPF_POLICY_OVERRIDE only:
+  overrides the final graphics stream), deflate zL[sS], inflate zng.
+* Sweep DEFAULT graphics (bench/results/phase4/sweep_default_gfx.md, load 1.3-1.7, core 3, 2x3 reps): zlib-ng on
+  our probed filtering: L6 smaller than the tuned libdeflate configs in every group and faster in 5/7
+  (16bit 405 vs 351 @ 40.67 vs 39.27; ga8 158 vs 137 @ 19.26 vs 18.75; rgb8 590 vs 454 @ 36.3 vs 35.7;
+  rgba8 218 vs 194 @ 25.9 vs 25.6; p8 314 vs 323, sub8 263 vs 296 but +5%/+17% ratio). Beats zlib-rs Balanced
+  in every graphics group on both axes. Z_FILTERED == default (identical sizes), Z_RLE much worse.
+  L5 would be faster still but loses rgba8 size to zlib-rs. -> DEFAULT graphics = zng L6.
+* Sweep BEST graphics (sweep_best_gfx.md, sweep_best_alpha.md): zng L9 beats zlib-rs High everywhere but loses
+  speed to miniz High on alpha/16-bit; L9 chain 1024 nice 258: 16bit 98 @ 45.95, rgba8 43 @ 28.03 (zrs 21 @ 27.96,
+  miniz 40 @ 25.9), ga8 30 @ 20.55 (zrs 15 @ 20.69: -0.7% size; chain 1536: 26 @ 20.83 then loses speed to miniz
+  28). Old libdeflate L10/48/96: ga8 8 @ 21.8, 16bit 16 @ 45.5. -> BEST graphics = zng L9/1024/258.
+* Tests: roundtrip adds 4 presets x LIBDEFLATE, 4 x ZLIBNG, 5 explicit zng level/strategy combos (stock zlib
+  inflates each); test_api covers backend validation + allocator hooks through zlib-ng; fuzz_roundtrip picks a
+  backend. gcc/clang -Wall -Wextra clean (zlib-ng itself built with -w).

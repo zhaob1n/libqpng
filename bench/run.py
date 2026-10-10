@@ -35,6 +35,9 @@ ENCODE = {
     "pf-fast":          [PFBENCH, "encode", "fast", "{R}"],
     "pf-default":       [PFBENCH, "encode", "default", "{R}"],
     "pf-best":          [PFBENCH, "encode", "best", "{R}"],
+    # backend forced (pf_encode_options.backend)
+    **{f"pf-{p}-{b}": [PFBENCH, "encode", f"{p}#{b}", "{R}"] for p in ("fastest", "fast", "default", "best")
+       for b in ("ld", "zng")},
     # exploration
     **{f"pf-u{f}": [PFBENCH, "encode", f"fast:{f}:ultra", "{R}"] for f in (0, 1, 2, 4, 5)},
     "pf-fast-pf":       [PFBENCH, "encode", "fast:5:pf", "{R}"],
@@ -68,6 +71,7 @@ INFLATE = {
     "fdeflate":        [RSREF, "bench-inflate", "-", "{R}"],
     "libdeflate":      [PFBENCH, "inflate", "stock", "{R}"],
     "pf-pairs":        [PFBENCH, "inflate", "pairs", "{R}"],
+    "zlib-ng":         [PFBENCH, "inflate", "zng", "{R}"],
 }
 STREAMS = os.environ.get("PNGFAST_STREAMS", "/workspace/deflate-bench/streams/png")
 
