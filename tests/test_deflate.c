@@ -40,7 +40,9 @@ static void gen(unsigned char *p, size_t n, int kind, unsigned seed) {
 
 int main(void) {
     static const size_t sizes[] = { 1, 7, 33, 100, 4095, 5000, 65536, 70001, 300000, 1200000 };
-    static const int levels[] = { 1, 6, 9, 12, LIBDEFLATE_PNG_FAST_LEVEL, -1, LIBDEFLATE_PNG_ULTRA_LEVEL };
+    /* 1000 + L: level L with pngfast's tuning knobs (search depth 48, nice 96, fixed minimum match 3) */
+    static const int levels[] = { 1, 6, 9, 12, LIBDEFLATE_PNG_FAST_LEVEL, -1, LIBDEFLATE_PNG_ULTRA_LEVEL,
+                                  1004, 1005, 1008, 1010 };
     int fails = 0, runs = 0;
     for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++)
         for (int kind = 0; kind < 4; kind++) {
@@ -49,8 +51,10 @@ int main(void) {
             gen(in + 1, n, kind, (unsigned)(si * 7 + kind));
             for (size_t li = 0; li < sizeof levels / sizeof *levels; li++) {
                 int lv = levels[li];
-                struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL : lv);
+                struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL
+                                                                              : lv >= 1000 ? lv - 1000 : lv);
                 if (lv < 0) libdeflate_set_png_min_match(c, 0);
+                if (lv >= 1000) { libdeflate_set_search_params(c, 48, 96); libdeflate_set_min_match_len(c, 3); }
                 size_t bound = libdeflate_deflate_compress_bound(NULL, n);
                 size_t zn = libdeflate_deflate_compress(c, in + 1, n, z, bound);
                 char what[64]; snprintf(what, sizeof what, "level %d kind %d", lv, kind);

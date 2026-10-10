@@ -47,14 +47,20 @@ static struct libdeflate_compressor *make_compressor(int level, int depth, int n
  */
 #define GRAPHICS_RATIO 6
 
-static size_t zcompress(int level, int depth, int nice, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
-                        pf_status *st) {
+/* minlen > 0 fixes libdeflate's minimum match length (levels 2-12; probed graphics paths use 3) */
+static size_t zcompress_ex(int level, int depth, int nice, int minlen, const uint8_t *src, size_t n, uint8_t *dst,
+                           size_t cap, pf_status *st) {
     struct libdeflate_compressor *c = make_compressor(level, depth, nice);
     if (!c) { *st = PF_ERR_NOMEM; return 0; }
+    if (minlen > 0 && level < PF_DEFLATE_PNGFAST) libdeflate_set_min_match_len(c, (unsigned)minlen);
     size_t zn = libdeflate_zlib_compress(c, src, n, dst, cap);
     libdeflate_free_compressor(c);
     if (!zn) *st = PF_ERR_ENCODE;
     return zn;
+}
+static size_t zcompress(int level, int depth, int nice, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
+                        pf_status *st) {
+    return zcompress_ex(level, depth, nice, 0, src, n, dst, cap, st);
 }
 
 /*
@@ -243,18 +249,19 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
                 }
             }
         }
-        /* 3. final compression of the chosen filtering */
+        /* 3. final compression of the chosen filtering. Graphics: minimum match length 3 (libdeflate would raise
+         *    it because few literal values are in use; short matches still pay here: -1.5%, slightly faster) */
         if (zn && graphics && !best) {
             /* alpha 8-bit graphics need lazy2 + long matches to stay below zlib-rs level 6; elsewhere level 5
              * already compresses better than zlib-rs 6 thanks to the filter choice */
-            zn = alpha && depth == 8 ? zcompress(8, 48, 258, filt, rawn, z, zcap, &st)
+            zn = alpha && depth == 8 ? zcompress_ex(8, 48, 258, 3, filt, rawn, z, zcap, &st)
                /* RGB: shallower search; None-filtered 8-bit RGB (flat UI, text) is long exact repeats: greedy */
-               : !alpha && bpp >= 3 ? (f == PF_FILTER_NONE && depth == 8 ? zcompress(4, 4, 16, filt, rawn, z, zcap, &st)
-                                                           : zcompress(5, 8, 32, filt, rawn, z, zcap, &st))
-               : zcompress(5, 0, 0, filt, rawn, z, zcap, &st);
+               : !alpha && bpp >= 3 ? (f == PF_FILTER_NONE && depth == 8 ? zcompress_ex(4, 4, 16, 3, filt, rawn, z, zcap, &st)
+                                                           : zcompress_ex(5, 8, 32, 3, filt, rawn, z, zcap, &st))
+               : zcompress_ex(5, 0, 0, 3, filt, rawn, z, zcap, &st);
         } else if (zn && graphics) {
-            zn = alpha || depth == 16 ? zcompress(10, 48, 96, filt, rawn, z, zcap, &st)   /* bounded near-optimal */
-                                      : zcompress(9, 0, 0, filt, rawn, z, zcap, &st);
+            zn = alpha || depth == 16 ? zcompress_ex(10, 48, 96, 3, filt, rawn, z, zcap, &st)   /* bounded near-optimal */
+                                      : zcompress_ex(9, 0, 0, 3, filt, rawn, z, zcap, &st);
         } else if (zn && (best || depth == 16)) {
             /* photos. BEST: level 8 (L10 is 2x slower for ~1.5%; L8 already beats zlib-rs 9). DEFAULT 16-bit: level 6, png-fast is weakest there (noisy low bytes).
              * Either way the png-fast stream already in z is kept if smaller. */

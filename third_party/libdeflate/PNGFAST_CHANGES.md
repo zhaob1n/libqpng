@@ -51,6 +51,13 @@ chunk's last byte, `in[-1]`); returns whole bytes written (raw DEFLATE). Used by
 graphics; L10 depth 48 nice 96 for alpha / 16-bit graphics in BEST - bounded near-optimal: nice 258 is ~2x
 slower on long-run data because every position offers 258-byte matches whose lengths are all costed).
 
+## Compressor: fixed minimum match length for levels 2-12
+
+`libdeflate_set_min_match_len(c, n)` (3..9; 0 = upstream heuristic). Upstream raises the minimum match length
+up to 9 when few distinct literal values are in use; filtered PNG graphics use few literals yet still profit
+from 3-byte matches (token-level comparison with zlib-rs level 9 on an RGBA screenshot). pngfast sets 3 on
+its probed graphics paths: -1.5% (DEFAULT) / -0.6% (BEST) on the graphics corpus, slightly faster.
+
 ## Decompressor
 
 * **Progress callback** - `libdeflate_deflate_decompress_progress(..., cb, ctx, step)`: the fast loop also

@@ -469,6 +469,7 @@ struct libdeflate_compressor {
 	/* png-fast (deflate_compress_png_fast) parameters */
 	u32 png_block_len;	/* soft maximum block length */
 	u32 png_skip_shift;	/* literal skip-ahead: step += (ip - lit_start) >> shift */
+	u32 fixed_min_len;	/* pngfast: 0 = adaptive minimum match length, else fixed (levels 2-12) */
 	u32 png_min_hash_len;	/* hashed matches: 8 (64-bit compare) */
 	u32 png_short_base;	/* short (< 8) matches must beat (base + log2 dist) bits */
 
@@ -3182,6 +3183,15 @@ libdeflate_set_search_params(struct libdeflate_compressor *c,
 					   MIN(nice_match_length, DEFLATE_MAX_MATCH_LEN));
 }
 
+LIBDEFLATEAPI void
+libdeflate_set_min_match_len(struct libdeflate_compressor *c, unsigned min_len)
+{
+	if (c->compression_level < 2 || c->impl == deflate_compress_png_fast ||
+	    c->impl == deflate_compress_png_ultra)
+		return;
+	c->fixed_min_len = min_len ? MAX(DEFLATE_MIN_MATCH_LEN, MIN(min_len, 9)) : 0;
+}
+
 LIBDEFLATEAPI size_t
 libdeflate_png_ultra_compress_chunk(struct libdeflate_compressor *c,
 				    struct libdeflate_png_ultra_state *st,
@@ -3243,7 +3253,7 @@ deflate_compress_greedy(struct libdeflate_compressor * restrict c,
 
 		init_block_split_stats(&c->split_stats);
 		deflate_begin_sequences(c, seq);
-		min_len = calculate_min_match_len(in_next,
+		min_len = c->fixed_min_len ? c->fixed_min_len : calculate_min_match_len(in_next,
 						  in_max_block_end - in_next,
 						  c->max_search_depth);
 		do {
@@ -3321,7 +3331,7 @@ deflate_compress_lazy_generic(struct libdeflate_compressor * restrict c,
 
 		init_block_split_stats(&c->split_stats);
 		deflate_begin_sequences(c, seq);
-		min_len = calculate_min_match_len(in_next,
+		min_len = c->fixed_min_len ? c->fixed_min_len : calculate_min_match_len(in_next,
 						  in_max_block_end - in_next,
 						  c->max_search_depth);
 		do {
@@ -3335,7 +3345,7 @@ deflate_compress_lazy_generic(struct libdeflate_compressor * restrict c,
 			 * been done recently.
 			 */
 			if (in_next >= next_recalc_min_len) {
-				min_len = recalculate_min_match_len(
+				min_len = c->fixed_min_len ? c->fixed_min_len : recalculate_min_match_len(
 						&c->freqs,
 						c->max_search_depth);
 				next_recalc_min_len +=
@@ -4325,7 +4335,7 @@ deflate_compress_near_optimal(struct libdeflate_compressor * restrict c,
 		if (prev_block_used_only_literals)
 			min_len = DEFLATE_MAX_MATCH_LEN + 1;
 		else
-			min_len = calculate_min_match_len(
+			min_len = c->fixed_min_len ? c->fixed_min_len : calculate_min_match_len(
 					in_block_begin,
 					in_max_block_end - in_block_begin,
 					c->max_search_depth);
@@ -4636,6 +4646,7 @@ libdeflate_alloc_compressor_ex(int compression_level,
 		       options->free_func : libdeflate_default_free_func;
 
 	c->compression_level = compression_level;
+	c->fixed_min_len = 0;
 
 	/*
 	 * The higher the compression level, the more we should bother trying to

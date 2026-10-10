@@ -1,6 +1,6 @@
 diff -ru a/lib/decompress_template.h b/lib/decompress_template.h
---- a/lib/decompress_template.h	2026-10-10 10:28:03.523489356 +0800
-+++ b/lib/decompress_template.h	2026-10-10 10:28:03.523489356 +0800
+--- a/lib/decompress_template.h	2026-10-10 10:35:05.306716350 +0800
++++ b/lib/decompress_template.h	2026-10-10 10:35:05.310716295 +0800
 @@ -44,13 +44,17 @@
  static ATTRIBUTES MAYBE_UNUSED enum libdeflate_result
  FUNCNAME(struct libdeflate_decompressor * restrict d,
@@ -107,22 +107,23 @@ diff -ru a/lib/decompress_template.h b/lib/decompress_template.h
  				return LIBDEFLATE_INSUFFICIENT_SPACE;
  			*out_next++ = length;
 diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
---- a/lib/deflate_compress.c	2026-10-10 10:28:03.515489420 +0800
-+++ b/lib/deflate_compress.c	2026-10-10 10:28:03.515489420 +0800
-@@ -466,6 +466,12 @@
+--- a/lib/deflate_compress.c	2026-10-10 10:35:05.302716406 +0800
++++ b/lib/deflate_compress.c	2026-10-10 10:35:05.302716406 +0800
+@@ -466,6 +466,13 @@
  	/* Anything of this size or less we won't bother trying to compress. */
  	size_t max_passthrough_size;
  
 +	/* png-fast (deflate_compress_png_fast) parameters */
 +	u32 png_block_len;	/* soft maximum block length */
 +	u32 png_skip_shift;	/* literal skip-ahead: step += (ip - lit_start) >> shift */
++	u32 fixed_min_len;	/* pngfast: 0 = adaptive minimum match length, else fixed (levels 2-12) */
 +	u32 png_min_hash_len;	/* hashed matches: 8 (64-bit compare) */
 +	u32 png_short_base;	/* short (< 8) matches must beat (base + log2 dist) bits */
 +
  	/*
  	 * The maximum search depth: consider at most this many potential
  	 * matches at each position
-@@ -536,6 +542,13 @@
+@@ -536,6 +543,13 @@
  
  		} f; /* (f)astest */
  
@@ -136,7 +137,7 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
  	#if SUPPORT_NEAR_OPTIMAL_PARSING
  		/* Data for near-optimal parsing */
  		struct {
-@@ -2523,6 +2536,686 @@
+@@ -2523,6 +2537,695 @@
  }
  
  /*
@@ -786,6 +787,15 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +					   MIN(nice_match_length, DEFLATE_MAX_MATCH_LEN));
 +}
 +
++LIBDEFLATEAPI void
++libdeflate_set_min_match_len(struct libdeflate_compressor *c, unsigned min_len)
++{
++	if (c->compression_level < 2 || c->impl == deflate_compress_png_fast ||
++	    c->impl == deflate_compress_png_ultra)
++		return;
++	c->fixed_min_len = min_len ? MAX(DEFLATE_MIN_MATCH_LEN, MIN(min_len, 9)) : 0;
++}
++
 +LIBDEFLATEAPI size_t
 +libdeflate_png_ultra_compress_chunk(struct libdeflate_compressor *c,
 +				    struct libdeflate_png_ultra_state *st,
@@ -823,7 +833,43 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
   * This is the "greedy" DEFLATE compressor. It always chooses the longest match.
   */
  static void
-@@ -3892,6 +4585,32 @@
+@@ -2550,7 +3253,7 @@
+ 
+ 		init_block_split_stats(&c->split_stats);
+ 		deflate_begin_sequences(c, seq);
+-		min_len = calculate_min_match_len(in_next,
++		min_len = c->fixed_min_len ? c->fixed_min_len : calculate_min_match_len(in_next,
+ 						  in_max_block_end - in_next,
+ 						  c->max_search_depth);
+ 		do {
+@@ -2628,7 +3331,7 @@
+ 
+ 		init_block_split_stats(&c->split_stats);
+ 		deflate_begin_sequences(c, seq);
+-		min_len = calculate_min_match_len(in_next,
++		min_len = c->fixed_min_len ? c->fixed_min_len : calculate_min_match_len(in_next,
+ 						  in_max_block_end - in_next,
+ 						  c->max_search_depth);
+ 		do {
+@@ -2642,7 +3345,7 @@
+ 			 * been done recently.
+ 			 */
+ 			if (in_next >= next_recalc_min_len) {
+-				min_len = recalculate_min_match_len(
++				min_len = c->fixed_min_len ? c->fixed_min_len : recalculate_min_match_len(
+ 						&c->freqs,
+ 						c->max_search_depth);
+ 				next_recalc_min_len +=
+@@ -3632,7 +4335,7 @@
+ 		if (prev_block_used_only_literals)
+ 			min_len = DEFLATE_MAX_MATCH_LEN + 1;
+ 		else
+-			min_len = calculate_min_match_len(
++			min_len = c->fixed_min_len ? c->fixed_min_len : calculate_min_match_len(
+ 					in_block_begin,
+ 					in_max_block_end - in_block_begin,
+ 					c->max_search_depth);
+@@ -3892,6 +4595,32 @@
  	if (compression_level == -1)
  		compression_level = 6;
  
@@ -856,7 +902,15 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
  	if (compression_level < 0 || compression_level > 12)
  		return NULL;
  
-@@ -4133,3 +4852,22 @@
+@@ -3917,6 +4646,7 @@
+ 		       options->free_func : libdeflate_default_free_func;
+ 
+ 	c->compression_level = compression_level;
++	c->fixed_min_len = 0;
+ 
+ 	/*
+ 	 * The higher the compression level, the more we should bother trying to
+@@ -4133,3 +4863,22 @@
  	 */
  	return (5 * max_blocks) + in_nbytes;
  }
@@ -880,8 +934,8 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +		c->png_min_hash_len = min_len;
 +}
 diff -ru a/lib/deflate_decompress.c b/lib/deflate_decompress.c
---- a/lib/deflate_decompress.c	2026-10-10 10:28:03.519489388 +0800
-+++ b/lib/deflate_decompress.c	2026-10-10 10:28:03.519489388 +0800
+--- a/lib/deflate_decompress.c	2026-10-10 10:35:05.306716350 +0800
++++ b/lib/deflate_decompress.c	2026-10-10 10:35:05.306716350 +0800
 @@ -278,7 +278,7 @@
   * be included for the intentional overrun in the match copy implementation.
   */
@@ -1072,9 +1126,9 @@ diff -ru a/lib/deflate_decompress.c b/lib/deflate_decompress.c
 +	d->static_codes_loaded = false;
 +}
 diff -ru a/libdeflate.h b/libdeflate.h
---- a/libdeflate.h	2026-10-10 10:28:03.507489483 +0800
-+++ b/libdeflate.h	2026-10-10 10:28:03.511489451 +0800
-@@ -60,6 +60,57 @@
+--- a/libdeflate.h	2026-10-10 10:35:05.298716461 +0800
++++ b/libdeflate.h	2026-10-10 10:35:05.298716461 +0800
+@@ -60,6 +60,67 @@
  libdeflate_alloc_compressor(int compression_level);
  
  /*
@@ -1107,6 +1161,16 @@ diff -ru a/libdeflate.h b/libdeflate.h
 +			     unsigned max_search_depth, unsigned nice_match_length);
 +
 +/*
++ * Levels 2-12: fixed minimum match length (3..9) instead of the heuristic that
++ * raises it when few distinct literals are in use (0 restores the heuristic).
++ * Filtered PNG graphics use few literal values yet profit from short matches:
++ * min 3 is 1.5% smaller and slightly faster on pngfast's graphics corpus.
++ */
++LIBDEFLATEAPI void
++libdeflate_set_min_match_len(struct libdeflate_compressor *compressor,
++			     unsigned min_len);
++
++/*
 + * png-ultra only: streaming use.  Only offset-1 runs are emitted, so the
 + * parser never needs more history than one byte, and the input can be fed in
 + * chunks (each chunk becomes one DEFLATE block, or stored blocks if smaller).
@@ -1132,7 +1196,7 @@ diff -ru a/libdeflate.h b/libdeflate.h
   * Like libdeflate_alloc_compressor(), but adds the 'options' argument.
   */
  LIBDEFLATEAPI struct libdeflate_compressor *
-@@ -251,6 +302,19 @@
+@@ -251,6 +312,19 @@
   * then the actual compressed size of the DEFLATE stream (aligned to the next
   * byte boundary) is written to *actual_in_nbytes_ret.
   */

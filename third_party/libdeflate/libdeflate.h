@@ -89,6 +89,16 @@ libdeflate_set_search_params(struct libdeflate_compressor *compressor,
 			     unsigned max_search_depth, unsigned nice_match_length);
 
 /*
+ * Levels 2-12: fixed minimum match length (3..9) instead of the heuristic that
+ * raises it when few distinct literals are in use (0 restores the heuristic).
+ * Filtered PNG graphics use few literal values yet profit from short matches:
+ * min 3 is 1.5% smaller and slightly faster on pngfast's graphics corpus.
+ */
+LIBDEFLATEAPI void
+libdeflate_set_min_match_len(struct libdeflate_compressor *compressor,
+			     unsigned min_len);
+
+/*
  * png-ultra only: streaming use.  Only offset-1 runs are emitted, so the
  * parser never needs more history than one byte, and the input can be fed in
  * chunks (each chunk becomes one DEFLATE block, or stored blocks if smaller).
