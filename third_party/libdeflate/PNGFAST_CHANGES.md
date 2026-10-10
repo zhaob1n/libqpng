@@ -40,8 +40,9 @@ Blocks grow adaptively (64 KiB, up to 256 KiB while data compresses well). Litle
 given codes (stock zlib rejects them). Output room is checked in chunks, so no scratch buffer is needed.
 Streaming API for row-chunked input (pngfast filters an L2-sized slice of rows at a time and never
 materialises the filtered image):
-`libdeflate_png_ultra_compress_chunk(c, hist, in, len, is_final, out, avail)` - `hist` = preceding bytes
-(window), returns bytes written. Used by pngfast's FASTEST and FAST presets.
+`libdeflate_png_ultra_compress_chunk(c, &state, in, len, is_final, out, avail)` - a zeroed
+`struct libdeflate_png_ultra_state` carries the bit buffer between chunks (runs may only reference the previous
+chunk's last byte, `in[-1]`); returns whole bytes written (raw DEFLATE). Used by pngfast's FASTEST and FAST presets.
 
 ## Compressor: match finder parameters for levels 2-12
 
