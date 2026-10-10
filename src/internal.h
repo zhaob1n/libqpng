@@ -71,6 +71,9 @@ static inline uint32_t pf__unpack(const uint8_t *s, uint32_t i, int d) {   /* MS
 void pf__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t rowbytes, int bpp, int mode);
 /* internal filter mode: adaptive with a bias towards Up (graphics) */
 #define PF__FILTER_ADAPTIVE_GFX 6
+/* PF__FILTER_ADAPTIVE_GFX without Paeth: opaque graphics (Paeth residuals rarely beat None/Sub/Up there and cost
+ * the most to evaluate; -1% size, faster) */
+#define PF__FILTER_ADAPTIVE_FLAT 7
 /* rows [y0, y1) only, written to dst from its start (row y0 - 1 is the Up/Avg/Paeth predecessor) */
 void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0, uint32_t y1, size_t n, int bpp,
                      int mode);

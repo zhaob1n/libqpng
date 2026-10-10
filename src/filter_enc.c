@@ -87,12 +87,13 @@ __attribute__((target("avx2"))) static void filt_row_avx2(int f, uint8_t *out, c
 }
 
 /* ---- fused cost of all five filters: cost[f] = sum |(int8)(x - pred_f)| ---- */
-static void costs_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[5]) {
+static inline void costs_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[5],
+                              const int paeth) {
     const __m128i z = _mm_setzero_si128();
     __m128i acc[5] = { z, z, z, z, z };
     size_t i = 0;
     uint64_t s[5] = { 0, 0, 0, 0, 0 };
-    for (; i < (size_t)bpp && i < n; i++) for (int f = 0; f < 5; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, 0, prev[i], 0));
+    for (; i < (size_t)bpp && i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, 0, prev[i], 0));
 #define ACC(k, r) acc[k] = _mm_add_epi64(acc[k], _mm_sad_epu8(_mm_min_epu8(r, _mm_sub_epi8(z, r)), z))
     for (; i + 16 <= n; i += 16) {
         __m128i x = _mm_loadu_si128((const __m128i *)(cur + i)), a = _mm_loadu_si128((const __m128i *)(cur + i - bpp));
@@ -101,19 +102,20 @@ static void costs_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bp
         __m128i r1 = _mm_sub_epi8(x, a); ACC(1, r1);
         __m128i r2 = _mm_sub_epi8(x, b); ACC(2, r2);
         __m128i r3 = _mm_sub_epi8(x, avg_v16(a, b)); ACC(3, r3);
-        __m128i r4 = _mm_sub_epi8(x, paeth_v16(a, b, c)); ACC(4, r4);
+        if (paeth) { __m128i r4 = _mm_sub_epi8(x, paeth_v16(a, b, c)); ACC(4, r4); }
     }
 #undef ACC
-    for (; i < n; i++) for (int f = 0; f < 5; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, cur[i - bpp], prev[i], prev[i - bpp]));
+    for (; i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, cur[i - bpp], prev[i], prev[i - bpp]));
     for (int f = 0; f < 5; f++)
         cost[f] = s[f] + (uint64_t)_mm_cvtsi128_si64(acc[f]) + (uint64_t)_mm_cvtsi128_si64(_mm_unpackhi_epi64(acc[f], acc[f]));
 }
-__attribute__((target("avx2"))) static void costs_avx2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[5]) {
+__attribute__((target("avx2"))) static inline void costs_avx2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp,
+                                                              uint64_t cost[5], const int paeth) {
     const __m256i z = _mm256_setzero_si256();
     __m256i acc[5] = { z, z, z, z, z };
     size_t i = 0;
     uint64_t s[5] = { 0, 0, 0, 0, 0 };
-    for (; i < (size_t)bpp && i < n; i++) for (int f = 0; f < 5; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, 0, prev[i], 0));
+    for (; i < (size_t)bpp && i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, 0, prev[i], 0));
 #define ACC(k, r) acc[k] = _mm256_add_epi64(acc[k], _mm256_sad_epu8(_mm256_min_epu8(r, _mm256_sub_epi8(z, r)), z))
     for (; i + 32 <= n; i += 32) {
         __m256i x = _mm256_loadu_si256((const __m256i *)(cur + i)), a = _mm256_loadu_si256((const __m256i *)(cur + i - bpp));
@@ -122,14 +124,30 @@ __attribute__((target("avx2"))) static void costs_avx2(const uint8_t *cur, const
         __m256i r1 = _mm256_sub_epi8(x, a); ACC(1, r1);
         __m256i r2 = _mm256_sub_epi8(x, b); ACC(2, r2);
         __m256i r3 = _mm256_sub_epi8(x, avg_v32(a, b)); ACC(3, r3);
-        __m256i r4 = _mm256_sub_epi8(x, paeth_v32(a, b, c)); ACC(4, r4);
+        if (paeth) { __m256i r4 = _mm256_sub_epi8(x, paeth_v32(a, b, c)); ACC(4, r4); }
     }
 #undef ACC
-    for (; i < n; i++) for (int f = 0; f < 5; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, cur[i - bpp], prev[i], prev[i - bpp]));
+    for (; i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, cur[i - bpp], prev[i], prev[i - bpp]));
     for (int f = 0; f < 5; f++) {
         __m128i v = _mm_add_epi64(_mm256_castsi256_si128(acc[f]), _mm256_extracti128_si256(acc[f], 1));
         cost[f] = s[f] + (uint64_t)_mm_cvtsi128_si64(v) + (uint64_t)_mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v));
     }
+}
+
+/* paeth = 0 skips the (expensive) Paeth cost and reports it as UINT64_MAX; constant-folded per wrapper */
+static void costs4_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[5]) {
+    costs_sse2(cur, prev, n, bpp, cost, 0); cost[4] = UINT64_MAX;
+}
+static void costs5_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[5]) {
+    costs_sse2(cur, prev, n, bpp, cost, 1);
+}
+__attribute__((target("avx2"))) static void costs4_avx2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp,
+                                                        uint64_t cost[5]) {
+    costs_avx2(cur, prev, n, bpp, cost, 0); cost[4] = UINT64_MAX;
+}
+__attribute__((target("avx2"))) static void costs5_avx2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp,
+                                                        uint64_t cost[5]) {
+    costs_avx2(cur, prev, n, bpp, cost, 1);
 }
 
 void pf__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int mode) {
@@ -151,14 +169,17 @@ void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0
         const uint8_t *cur = px + (size_t)y * stride, *prev = y ? cur - stride : zrow;
         uint8_t *o = dst + (size_t)(y - y0) * (n + 1);
         int f = mode;
-        if (mode == PF_FILTER_ADAPTIVE || mode == PF__FILTER_ADAPTIVE_GFX) {
+        if (mode == PF_FILTER_ADAPTIVE || mode == PF__FILTER_ADAPTIVE_GFX || mode == PF__FILTER_ADAPTIVE_FLAT) {
             uint64_t cost[5];
-            if (avx2) costs_avx2(cur, prev, n, bpp, cost); else costs_sse2(cur, prev, n, bpp, cost);
+            if (mode == PF__FILTER_ADAPTIVE_FLAT)
+                (avx2 ? costs4_avx2 : costs4_sse2)(cur, prev, n, bpp, cost);
+            else
+                (avx2 ? costs5_avx2 : costs5_sse2)(cur, prev, n, bpp, cost);
             f = 0;
             for (int k = 1; k < 5; k++) if (cost[k] < cost[f]) f = k;
             /* graphics: Up whenever it is within 2x of the best residual sum (repeated rows / zero runs
              * matter more to LZ than small residuals; -3..6% on screenshots, worse on photos) */
-            if (mode == PF__FILTER_ADAPTIVE_GFX && cost[PF_FILTER_UP] <= 2 * cost[f]) f = PF_FILTER_UP;
+            if (mode != PF_FILTER_ADAPTIVE && cost[PF_FILTER_UP] <= 2 * cost[f]) f = PF_FILTER_UP;
         }
         o[0] = (uint8_t)f;
         if (avx2) filt_row_avx2(f, o + 1, cur, prev, n, bpp); else filt_row_sse2(f, o + 1, cur, prev, n, bpp);
