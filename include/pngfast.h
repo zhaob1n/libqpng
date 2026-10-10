@@ -20,9 +20,9 @@ extern "C" {
 #endif
 
 #define PNGFAST_VERSION_MAJOR 1
-#define PNGFAST_VERSION_MINOR 1
+#define PNGFAST_VERSION_MINOR 2
 #define PNGFAST_VERSION_PATCH 0
-#define PNGFAST_VERSION_STRING "1.1.0"
+#define PNGFAST_VERSION_STRING "1.2.0"
 
 #if defined(_WIN32) && defined(PNGFAST_SHARED)
 #  define PF_API __declspec(dllexport)
@@ -120,6 +120,72 @@ PF_API pf_status pf_read_info(const void *png, size_t png_size, pf_info *info);
 PF_API pf_status pf_decode(const void *png, size_t png_size, const pf_decode_options *opts, pf_image *img);
 PF_API void pf_image_free(pf_image *img);
 
+/* ---- metadata (ancillary chunks) ------------------------------------------------------------------------------
+ * pf_read_metadata() parses every ancillary chunk of a PNG held in memory into a pf_metadata (one allocation tree
+ * owned by the struct, free with pf_metadata_free). pf_encode_options.metadata writes the same struct back.
+ * Values are reported as stored: pngfast applies NO color management (gAMA, cHRM, iCCP, sRGB, cICP, mDCV, cLLI,
+ * sBIT and bKGD are informational; convert yourself, e.g. with lcms2, if needed).
+ * Compressed chunks (zTXt, compressed iTXt, iCCP) are inflated with per-chunk and total limits (decompression
+ * bombs). Malformed, duplicate or over-limit ancillary chunks are skipped and counted in `skipped` (like browsers /
+ * the png crate); an unknown critical chunk or a broken chunk layout is an error as in pf_decode. */
+typedef enum { PF_TEXT_TEXT = 0, PF_TEXT_ZTXT = 1, PF_TEXT_ITXT = 2 } pf_text_kind;
+typedef struct {
+    pf_text_kind kind;           /* chunk it came from / is written as */
+    const char *keyword;         /* 1..79 bytes Latin-1, NUL-terminated */
+    const char *text;            /* tEXt/zTXt: Latin-1, iTXt: UTF-8; NUL-terminated (decompressed) */
+    size_t text_size;            /* bytes, without the terminator (encode: 0 = strlen(text)) */
+    const char *language;        /* iTXt only (may be ""), NULL otherwise */
+    const char *translated_keyword; /* iTXt only (UTF-8, may be ""), NULL otherwise */
+    int compressed;              /* iTXt: compression flag (zTXt is always compressed, tEXt never) */
+} pf_text;
+
+/* where an unknown chunk sits; the encoder writes it back at the same place. Decoding reports BEFORE_PLTE only for
+ * chunks in front of an actual PLTE chunk (without PLTE every chunk ahead of the image data is BEFORE_IDAT). */
+typedef enum { PF_CHUNK_BEFORE_PLTE = 0, PF_CHUNK_BEFORE_IDAT = 1, PF_CHUNK_AFTER_IDAT = 2 } pf_chunk_location;
+typedef struct {
+    char type[5];                /* 4 ASCII letters + NUL; must be ancillary (lowercase first letter) */
+    pf_chunk_location location;
+    const uint8_t *data;
+    uint32_t size;
+} pf_chunk;
+
+typedef struct {
+    /* has_* = 1 if the chunk was present (decode) / should be written (encode) */
+    int has_gama;  uint32_t gamma;            /* gAMA: gamma * 100000 */
+    int has_chrm;  uint32_t chrm[8];          /* cHRM: white x,y, red x,y, green x,y, blue x,y (* 100000) */
+    int has_srgb;  uint8_t srgb_intent;       /* sRGB: rendering intent 0..3 */
+    int has_cicp;  uint8_t cicp[4];           /* cICP: primaries, transfer, matrix coefficients, full range flag */
+    int has_mdcv;  uint16_t mdcv_primaries[6]; uint16_t mdcv_white[2]; uint32_t mdcv_max_lum, mdcv_min_lum; /* mDCV */
+    int has_clli;  uint32_t clli_max_cll, clli_max_fall;   /* cLLI (* 10000 cd/m2) */
+    int has_phys;  uint32_t phys_x, phys_y; uint8_t phys_unit;   /* pHYs: pixels per unit, unit 0 = unknown, 1 = metre */
+    int has_time;  uint16_t time_year; uint8_t time_month, time_day, time_hour, time_minute, time_second;  /* tIME */
+    int has_bkgd;  uint8_t bkgd[6]; uint8_t bkgd_size;     /* bKGD as stored (1: palette index, 2: gray, 6: RGB; BE) */
+    int has_sbit;  uint8_t sbit[4]; uint8_t sbit_size;     /* sBIT as stored (1..4 bytes) */
+    const char *iccp_name;       /* iCCP profile name (NULL if no iCCP) */
+    const uint8_t *iccp;         /* decompressed ICC profile */
+    size_t iccp_size;
+    const uint8_t *exif;         /* eXIf payload (NULL if absent) */
+    size_t exif_size;
+    const pf_text *texts;  size_t text_count;
+    const pf_chunk *chunks; size_t chunk_count;   /* unknown ancillary chunks (passthrough), in file order */
+    uint32_t skipped;            /* decode: malformed / duplicate / over-limit ancillary chunks that were ignored */
+    void *internal_;             /* decode: owned storage (do not touch); encode: ignored */
+} pf_metadata;
+
+typedef struct {
+    int verify_crc;                    /* default 1: a bad ancillary CRC -> chunk skipped (counted) */
+    size_t max_chunk_decompressed;     /* per zTXt/iTXt/iCCP inflated size; 0 = default (16 MiB) */
+    size_t max_total;                  /* all metadata (incl. decompressed); 0 = default (64 MiB) */
+    uint32_t max_chunks;               /* text + unknown chunks kept; 0 = default (4096) */
+    int keep_unknown;                  /* default 1: collect unknown ancillary chunks for passthrough */
+    const pf_allocator *allocator;     /* NULL = malloc/free */
+} pf_metadata_options;
+
+PF_API void pf_metadata_options_init(pf_metadata_options *opts);
+/* Parse all ancillary chunks (the image data is not decoded). opts may be NULL. On error *meta is zeroed. */
+PF_API pf_status pf_read_metadata(const void *png, size_t png_size, const pf_metadata_options *opts, pf_metadata *meta);
+PF_API void pf_metadata_free(pf_metadata *meta);
+
 /* ---- encoding ----------------------------------------------------------------------------------------------- */
 typedef enum {
     PF_PRESET_FASTEST = 0,   /* Up filter + run-only png-fast deflate: maximum speed */
@@ -180,6 +246,10 @@ typedef struct {
      * PF_ERR_UNSUPPORTED if the backend is not compiled in. */
     int backend;
     int zlib_strategy;
+    /* since 1.2: ancillary chunks to write (NULL = none). zTXt / compressed iTXt texts and the ICC profile are
+     * compressed here. Invalid entries (keywords, sizes for the color type, values out of range, critical or
+     * reserved unknown chunk types) -> PF_ERR_ARGUMENT. Unknown chunks are written unchanged. */
+    const pf_metadata *metadata;
 } pf_encode_options;
 
 PF_API void pf_encode_options_init(pf_encode_options *opts);

@@ -5,7 +5,7 @@ set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "Release C flags")
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
 endif()
-project(pngfast VERSION 1.1.0 LANGUAGES C)
+project(pngfast VERSION 1.2.0 LANGUAGES C)
 
 option(PNGFAST_BUILD_TESTS "Build tests" ON)
 option(PNGFAST_BUILD_TOOLS "Build pngfast-cli and the benchmark tool" ON)
@@ -74,7 +74,7 @@ endif()
 #    linked next to stock zlib / zlib-ng / libdeflate. Tests and tools that need the internals link
 #    pngfast_internal (same objects, nothing localized).
 option(PNGFAST_HIDE_SYMBOLS "Localize all non-API symbols in libpngfast (needs ld -r + objcopy, ELF)" ON)
-set(PF_SOURCES src/common.c src/decode.c src/unfilter.c src/expand.c src/encode.c src/filter_enc.c src/deflate_backend.c)
+set(PF_SOURCES src/common.c src/decode.c src/unfilter.c src/expand.c src/encode.c src/filter_enc.c src/deflate_backend.c src/metadata.c)
 add_library(pngfast_obj OBJECT ${PF_SOURCES})
 target_include_directories(pngfast_obj PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                                        PRIVATE src ${LD})

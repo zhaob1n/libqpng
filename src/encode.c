@@ -1,5 +1,6 @@
 /* encode.c - PNG encoder: validation, presets, filtering, deflate (vendored libdeflate), chunk writing. */
 #include "deflate_backend.h"
+#include "metadata.h"
 #include <stdio.h>
 
 void pf_encode_options_init(pf_encode_options *o) {
@@ -130,6 +131,7 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
                        (color == PF_COLOR_GRAY && opts->trns_bytes != 2) || (color == PF_COLOR_RGB && opts->trns_bytes != 6) ||
                        (color == PF_COLOR_PALETTE && opts->trns_bytes > opts->palette_entries)))
         return PF_ERR_ARGUMENT;
+    if (opts->metadata) { pf_status ms = pf__meta_validate(opts->metadata, color); if (ms != PF_OK) return ms; }
     const int bits = ch * depth, bpp = bits >= 8 ? bits / 8 : 1;
     const size_t rowbytes = ((size_t)w * bits + 7) / 8;
     if (!stride) stride = rowbytes;
@@ -171,18 +173,27 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     /* worst-case bound over all compression levels */
     const size_t zcap = pf__zbound(rawn);
     const size_t nchunks = zcap / 0x40000000u + 1;   /* IDAT chunks are split at 1 GiB */
+    /* ancillary chunks, serialised up front (sizes needed for the output bound) */
+    uint8_t *mb[3] = { NULL, NULL, NULL }; size_t mn[3] = { 0, 0, 0 };
+    if (opts->metadata) {
+        pf_status ms = PF_OK;
+        for (int l = 0; l < 3 && ms == PF_OK; l++) ms = pf__meta_serialize(opts->metadata, l, A, &mb[l], &mn[l]);
+        if (ms != PF_OK) { for (int l = 0; l < 3; l++) pf__free(A, mb[l]); pf__free(A, filt); return ms; }
+    }
     const size_t cap = 8 + 25 + (opts->palette ? 12 + 3 * (size_t)opts->palette_entries : 0) +
-                       (opts->trns ? 12 + (size_t)opts->trns_bytes : 0) + 12 * nchunks + zcap + 12;
+                       (opts->trns ? 12 + (size_t)opts->trns_bytes : 0) + 12 * nchunks + zcap + 12 + mn[0] + mn[1] + mn[2];
     uint8_t *out = pf__alloc(A, cap);
-    if (!out) { pf__free(A, filt); return PF_ERR_NOMEM; }
+    if (!out) { for (int l = 0; l < 3; l++) pf__free(A, mb[l]); pf__free(A, filt); return PF_ERR_NOMEM; }
     static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
     uint8_t *p = out;
     memcpy(p, sig, 8); p += 8;
     uint8_t ihdr[13];
     wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color; ihdr[10] = ihdr[11] = ihdr[12] = 0;
     p = put_chunk(p, "IHDR", ihdr, 13);
+    if (mn[0]) { memcpy(p, mb[0], mn[0]); p += mn[0]; }
     if (opts->palette) p = put_chunk(p, "PLTE", opts->palette, 3u * (uint32_t)opts->palette_entries);
     if (opts->trns) p = put_chunk(p, "tRNS", opts->trns, (uint32_t)opts->trns_bytes);
+    if (mn[1]) { memcpy(p, mb[1], mn[1]); p += mn[1]; }
     /* single IDAT (bound < 1 GiB): compress in place behind the IDAT header. Otherwise compress to the end of the
      * buffer and lay the chunks out in front of the data. */
     uint8_t *z = nchunks == 1 ? p + 8 : out + cap - zcap - 12;
@@ -257,13 +268,15 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
         pf__free(A, tmp);
     }
     pf__free(A, filt);
-    if (!zn) { pf__free(A, out); return st != PF_OK ? st : PF_ERR_ENCODE; }
+    if (!zn) { for (int l = 0; l < 3; l++) pf__free(A, mb[l]); pf__free(A, out); return st != PF_OK ? st : PF_ERR_ENCODE; }
     for (size_t done = 0; done < zn;) {
         uint32_t len = (uint32_t)((zn - done) < 0x40000000u ? zn - done : 0x40000000u);
         if (p + 8 != z + done) memmove(p + 8, z + done, len);   /* p + 8 <= z + done always holds: chunks only add 12-byte overhead */
         p = put_chunk(p, "IDAT", NULL, len);
         done += len;
     }
+    if (mn[2]) { memcpy(p, mb[2], mn[2]); p += mn[2]; }
+    for (int l = 0; l < 3; l++) pf__free(A, mb[l]);
     p = put_chunk(p, "IEND", NULL, 0);
     *outn = (size_t)(p - out);
     *outp = pf__realloc_shrink(A, out, cap, *outn);

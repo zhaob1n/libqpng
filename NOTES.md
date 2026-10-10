@@ -192,3 +192,12 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
     static zlib-ng native + zlib-compat and libdeflate with upstream names once under build/link_test, links them
     with libpngfast.a, uses both sides). Negative control: libpngfast_internal.a -> "multiple definition".
     sanitize.sh also builds the shared lib and runs `symbols`.
+* Item 4c DONE (metadata): pngfast.h pf_metadata / pf_text / pf_chunk, pf_read_metadata (+options: per-chunk
+  inflate limit 16 MiB, total 64 MiB, 4096 text+unknown chunks, keep_unknown, verify_crc), pf_metadata_free;
+  pf_encode_options.metadata writes it (src/metadata.c; serialised before the output bound; zTXt/iTXt/iCCP
+  compressed with libdeflate L9). Malformed / duplicate / bad-CRC / over-limit ancillary chunks are skipped and
+  counted. Unknown chunks report BEFORE_PLTE only in front of a real PLTE. tests/test_metadata.c (ctest metadata):
+  all fields round trip (byte-identical re-encode), limits, 64 MiB zTXt bomb refused, corrupted gAMA skipped,
+  validation errors, PngSuite values, all 162 PngSuite files re-encoded with their metadata. fuzz_decode parses,
+  rewrites and re-parses metadata. (Parser uses `goto bad`: a `continue` in a do{}while(0) macro was the bug
+  ASan found in the lost first version.) Version 1.2.0.
