@@ -88,3 +88,21 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   lazy matcher tuned for synthetic content; alpha graphics parsing gap vs zlib-9 (BEST).
 * BEST p8 photos: L10 is slow (7 MB/s); a level-9/10 hybrid could match zlib-rs High speed.
 * Optional: 3-4 literals per decode lookup; non-x86 (NEON) kernels (build currently #errors on non-x86-64).
+
+## Phase 3 (Oct 10, from 09:25) — closing the gaps
+* Gap 1/2 DONE: png-ultra (libdeflate level 101): single pass, offset-1 runs only, per-block Huffman code
+  from a sampled dry run (every 8th 512-byte chunk, floor 1 per symbol, symbols 286/287 excluded!),
+  4 literals per SWAR probe, 32-byte run extension, block rewound to stored if larger.
+  Blocks 64 KiB, 256 KiB after a >= 4:1 block. Chunk API (libdeflate_png_ultra_compress_chunk) lets pngfast
+  filter rows into an L2-sized buffer and compress as it goes: no full filtered image -> no 200 page
+  faults per MB (was 26% of FASTEST time on graphics). FASTEST = Up + ultra stream; FAST = adaptive
+  (Up after a >= 4:1 chunk) + ultra stream. Both now beat png Fastest / Fast in every group (speed+size).
+* Bug caught by the new zlib check: litlen symbols 286/287 got codes -> zlib rejects; libdeflate accepts.
+  tests/test_deflate.c + roundtrip now inflate every stream with stock zlib.
+* Gap 3/4 analysis: zlib-rs L6 (deflate_medium) / L9 compress PNG graphics better than libdeflate L6 / L9
+  on the same filtered bytes (graphics.g8: zrs6 9565 vs ld6 10634; rgba8: zrs9 15593 vs ld9 19150).
+  Not filtering: png crate adaptive == ours (tested its Up/Sub/Avg/Paeth tie order: no change).
+  Not block size (zlib memLevel test), not min match (forced 3..6: no gain), backward match extension
+  over literals: +0.3% only (dropped). Deep chains help (ld9/4096/258) but are slow; near-optimal
+  (L10+) beats zrs9 in size but bt-matchfinder is pathological on repetitive data (5-8 MB/s).
+  CAREFUL: never `git checkout` a file with uncommitted work (lost an hour-old edit once).
