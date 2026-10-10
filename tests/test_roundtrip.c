@@ -2,6 +2,32 @@
  * Covers every color type / bit depth in the corpus (palette with PLTE/tRNS carried over). */
 #include "pngfast.h"
 #include "test_util.h"
+#ifdef PNGFAST_TEST_ZLIB
+#include <zlib.h>
+/* the IDAT stream must also inflate with stock zlib, to h * (1 + rowbytes) bytes */
+static int zlib_ok(const uint8_t *png, size_t pn, const pf_image *im) {
+    static const int ch[7] = { 1, 0, 3, 1, 2, 0, 4 };
+    const size_t raw = (size_t)im->height * (1 + ((size_t)im->width * ch[im->color_type] * im->bit_depth + 7) / 8);
+    z_stream s; memset(&s, 0, sizeof s);
+    uint8_t *out = malloc(raw + 1);
+    int ok = out && inflateInit(&s) == Z_OK, r = Z_OK;
+    s.next_out = out; s.avail_out = (uInt)raw + 1;
+    for (size_t i = 8; ok && i + 12 <= pn;) {
+        uint32_t len = (uint32_t)png[i] << 24 | (uint32_t)png[i + 1] << 16 | (uint32_t)png[i + 2] << 8 | png[i + 3];
+        if (!memcmp(png + i + 4, "IDAT", 4)) {
+            s.next_in = (uint8_t *)png + i + 8; s.avail_in = len;
+            r = inflate(&s, Z_NO_FLUSH);
+            if (r != Z_OK && r != Z_STREAM_END) ok = 0;
+        }
+        i += 12 + (size_t)len;
+    }
+    ok = ok && r == Z_STREAM_END && s.total_out == raw;
+    inflateEnd(&s); free(out);
+    return ok;
+}
+#else
+static int zlib_ok(const uint8_t *png, size_t pn, const pf_image *im) { (void)png; (void)pn; (void)im; return 1; }
+#endif
 
 int main(int argc, char **argv) {
     int fails = 0, runs = 0;
@@ -26,6 +52,7 @@ int main(int argc, char **argv) {
             pf_status s = pf_encode(src.pixels, src.width, src.height, src.stride, (pf_color)src.color_type, src.bit_depth, &e, &png, &pn);
             runs++;
             if (s) { fprintf(stderr, "encode %s v%d: %s\n", argv[fi], v, pf_status_string(s)); fails++; continue; }
+            if (!zlib_ok(png, pn, &src)) { fprintf(stderr, "ZLIB REJECTS %s variant %d\n", argv[fi], v); fails++; }
             pf_image back; s = pf_decode(png, pn, NULL, &back);
             if (s || back.size != src.size || back.width != src.width || back.color_type != src.color_type ||
                 back.bit_depth != src.bit_depth || memcmp(back.pixels, src.pixels, src.size)) {
