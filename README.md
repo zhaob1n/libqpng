@@ -1,8 +1,9 @@
 # pngfast
 
-Fast, small PNG decoder and encoder in C11 (x86-64), built on a vendored and modified
+Fast, small PNG decoder and encoder in C11, built on a vendored and modified
 [libdeflate](https://github.com/ebiggers/libdeflate). Single header API, no other dependencies,
-runtime CPU dispatch (SSE2 baseline, AVX2 / BMI2 / AVX-512 where available; never `-march=native`).
+runtime CPU dispatch on x86-64 (SSE2 baseline, AVX2 / BMI2 / AVX-512 where available; never `-march=native`).
+Other architectures (or `-DPNGFAST_NO_SIMD`) build portable scalar kernels with identical output.
 
 * **Decode**: all PNG color types / bit depths, Adam7, tRNS, 16-bit; outputs raw samples, "expanded"
   (png crate `EXPAND` semantics), or image-rs layout (8-bit RGBA/RGB/LA/L, 16-bit native endian).
@@ -69,7 +70,7 @@ what `PF_OUTPUT_RAW` decoding returns.
 | `src/decode.c` | chunk parsing, limits, fused inflate -> unfilter driver, Adam7 |
 | `src/unfilter.c` | scalar / SSE2 / AVX2 un-filter kernels, 2-row wavefronts, AVX2 quad-Paeth |
 | `src/expand.c` | output transforms (sub-byte unpack, palette / tRNS expansion, 16-bit swap) |
-| `src/filter_enc.c` | encoder filters + fused one-pass adaptive cost (SSE2/AVX2) |
+| `src/filter_enc.c` | encoder filters + fused one-pass adaptive cost (SSE2/AVX2, portable scalar) |
 | `src/encode.c` | validation, presets / content probing, chunk writer |
 | `src/common.c` | CPU dispatch, allocator hooks, status strings |
 | `third_party/libdeflate` | libdeflate v1.26 + pngfast changes ([PNGFAST_CHANGES.md](third_party/libdeflate/PNGFAST_CHANGES.md), [patch](third_party/libdeflate/pngfast-changes.patch)); symbols renamed `pf_libdeflate_*` |
@@ -83,10 +84,10 @@ what `PF_OUTPUT_RAW` decoding returns.
 
 | preset | what it does | compared against |
 |---|---|---|
-| FASTEST | Up filter, run-only png-fast deflate | png `Compression::Fastest` (Up + fdeflate UltraFast) |
-| FAST | adaptive filter, png-fast deflate | png `Fast` (Adaptive + UltraFast) |
-| DEFAULT | probe with FAST; photos: keep (palette/16-bit: also libdeflate L6, keep smaller); graphics (ratio >= 6): also try filter None, recompress best filter at L6 (L7 for alpha / 16-bit) | png `Balanced` (Adaptive + flate2 L6, miniz_oxide or zlib-rs) |
-| BEST | photos: libdeflate L10 (near-optimal parse); graphics: filter trial + L9 | png `High` (Adaptive + flate2 L9) |
+| FASTEST | Up filter + png-ultra (single pass, runs only, sampled per-block Huffman codes), streamed in L2-sized row chunks | png `Compression::Fastest` (Up + fdeflate UltraFast) |
+| FAST | adaptive filter (Up after strongly compressible chunks) + png-ultra, streamed | png `Fast` (Adaptive + UltraFast) |
+| DEFAULT | row-sample probe (1/6 of rows): photos -> adaptive + png-fast (palette: also Paeth; 16-bit: also L6); graphics -> Up-biased adaptive vs None chosen on the sample, then libdeflate L4-L8 with tuned search and minimum match 3 | png `Balanced` (Adaptive + flate2 L6, miniz_oxide or zlib-rs) |
+| BEST | same probe; photos: libdeflate L8; graphics: L9, or bounded near-optimal L10 (depth 48, nice 96) for alpha / 16-bit | png `High` (Adaptive + flate2 L9) |
 
 The adaptive filter is the libpng "minimum sum of absolute signed residuals" heuristic over all five filters
 (the png crate's Adaptive omits None).
@@ -110,8 +111,9 @@ The adaptive filter is the libpng "minimum sum of absolute signed residuals" heu
   strides), conformance (PngSuite + formats corpus, 3 output modes, FNV-64 of every output vs png crate /
   image-rs references in `tests/data/refs.txt`; regenerate with `tests/gen_refs.py`), round trips (every
   preset, every filter, several deflate levels), fuzz smoke runs.
-* `scripts/sanitize.sh [ITERS] [SECONDS]`: ASan+UBSan build, ctest, mutation fuzzing; libFuzzer sessions when
-  clang is installed.
+* `scripts/sanitize.sh [ITERS] [SECONDS]`: ASan+UBSan build + ctest (SIMD and portable scalar builds), mutation
+  fuzzing; libFuzzer sessions when clang is installed. Every encoder stream in the tests is also inflated by
+  stock zlib when it is available (libdeflate alone accepts some invalid streams).
 * Fuzzing with AFL++: `afl-fuzz -i tests/data/pngsuite -o out -- build/fuzz_decode`.
 
 ## Benchmarks
