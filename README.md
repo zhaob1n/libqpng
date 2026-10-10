@@ -22,13 +22,13 @@ Other architectures (or `-DPNGFAST_NO_SIMD`) build portable scalar kernels with 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build              # api, conformance, roundtrip, fuzz smoke
+ctest --test-dir build              # api, conformance, roundtrip, metadata, stream, apng, symbols, link_test, fuzz smoke
 cmake --install build --prefix /usr/local   # installs pngfast.h, libpngfast, pngfast.pc, CMake package
 ```
 
 Options: `PNGFAST_WITH_ZLIBNG` (default ON when `third_party/zlib-ng` exists; OFF builds a libdeflate-only
 library with the pngfast 1.0 encoder policy), `PNGFAST_BUILD_SHARED` (default OFF), `PNGFAST_BUILD_TESTS`, `PNGFAST_BUILD_TOOLS`,
-`PNGFAST_SANITIZE` (ASan+UBSan), `PNGFAST_LIBFUZZER` (clang), `PNGFAST_CORPUS_DIR` (extra round-trip corpus).
+`PNGFAST_HIDE_SYMBOLS` (default ON: the library exports only the `pf_*` API, see below), `PNGFAST_SANITIZE` (ASan+UBSan), `PNGFAST_LIBFUZZER` (clang), `PNGFAST_CORPUS_DIR` (extra round-trip corpus).
 Consumers: `pkg-config --cflags --libs pngfast` or `find_package(pngfast)` + `pngfast::pngfast`.
 
 ## API
@@ -66,6 +66,92 @@ and pass it in either options struct; decoded images remember their allocator.
 Encoding accepts samples in PNG byte order (16-bit big-endian, sub-byte depths packed MSB first) - exactly
 what `PF_OUTPUT_RAW` decoding returns.
 
+### Metadata (ancillary chunks)
+
+```c
+pf_metadata meta;                                  /* tEXt/zTXt/iTXt, iCCP, sRGB, gAMA, cHRM, cICP, mDCV, cLLI, */
+if (pf_read_metadata(png, png_size, NULL, &meta) == PF_OK) {   /* pHYs, tIME, bKGD, sBIT, eXIf, unknown chunks */
+    for (size_t i = 0; i < meta.text_count; i++) printf("%s: %s\n", meta.texts[i].keyword, meta.texts[i].text);
+    if (meta.iccp) use_profile(meta.iccp, meta.iccp_size);       /* decompressed */
+    eopt.metadata = &meta;                         /* write everything back (unknown chunks at their place) */
+    pf_encode(pixels, w, h, 0, PF_COLOR_RGB, 8, &eopt, &out, &out_size);
+    pf_metadata_free(&meta);
+}
+/* writing from scratch: */
+pf_text t = { PF_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", 1 };
+pf_metadata m = {0}; m.texts = &t; m.text_count = 1; m.has_phys = 1; m.phys_x = m.phys_y = 2835; m.phys_unit = 1;
+eopt.metadata = &m;
+```
+
+Limits (`pf_metadata_options`): 16 MiB per decompressed zTXt/iTXt/iCCP, 64 MiB in total, 4096 text + unknown
+chunks; malformed / duplicate / bad-CRC / over-limit ancillary chunks are skipped and counted in `meta.skipped`.
+Values are reported as stored: **no color management** is applied (gAMA, cHRM, iCCP, sRGB, cICP, mDCV, cLLI, sBIT
+and bKGD are informational).
+
+### Streaming
+
+```c
+/* decode: push bytes as they arrive; rows are delivered through a callback */
+static int on_row(void *user, uint32_t y, const uint8_t *row, size_t n) { consume(row, n); return 0; }
+pf_decoder *dec; pf_decoder_new(&dopt, on_row, user, &dec);    /* row_cb NULL: whole image at finish */
+while ((n = recv(sock, buf, sizeof buf, 0)) > 0) {
+    s = pf_decoder_push(dec, buf, n);           /* PF_MORE_DATA, PF_OK after IEND, or an error */
+    if (pf_decoder_info(dec, &info) == PF_OK) { /* header available as soon as IHDR arrived */ }
+    if (s != PF_MORE_DATA) break;
+}
+if (s == PF_OK) s = pf_decoder_finish(dec, NULL /* or &img in image mode */);
+pf_decoder_free(dec);
+/* or pull: pf_decode_stream(read_fn, file, &dopt, on_row, user, NULL); */
+
+/* encode: rows in, bytes out through a write callback, bounded memory */
+static int wr(void *f, const uint8_t *p, size_t n) { return fwrite(p, 1, n, f) != n; }
+pf_encoder *enc; pf_encoder_new(w, h, PF_COLOR_RGBA, 8, &eopt, wr, file, &enc);
+for (y = 0; y < h; y += k) pf_encoder_push_rows(enc, rows + y * stride, stride, k);
+pf_encoder_finish(enc); pf_encoder_free(enc);
+```
+
+Trade-offs: libdeflate (used by the one-shot decoder) cannot inflate incrementally. Row mode on a non-interlaced
+image with zlib-ng built in is truly incremental (zlib-ng raw inflate into a one-row buffer, O(row) memory).
+Image mode, interlaced images and libdeflate-only builds buffer the compressed input and decode it with the
+one-shot path once IEND arrived (memory: file + image; image mode is then as fast as `pf_decode`). The encoder
+compresses FASTEST/FAST with libdeflate's streamed png-ultra (as one-shot) and DEFAULT/BEST with zlib-ng L6/L9
+(png-ultra without zlib-ng); it filters row by row (no whole-image probing), so output can be a bit larger than
+`pf_encode`'s. Measurements in NOTES.md (Phase 5).
+
+### APNG
+
+```c
+pf_apng *a;
+if (pf_apng_open(png, size, NULL, &a) == PF_OK) {           /* png must stay valid until pf_apng_free */
+    pf_apng_info ai; pf_apng_get_info(a, &ai);                /* num_frames, num_plays, canvas size */
+    const uint8_t *canvas; pf_frame_info fi;
+    while (pf_apng_next_frame(a, &canvas, &fi) == PF_OK)       /* composed RGBA8 canvas, width * 4 stride */
+        show(canvas, fi.delay_num, fi.delay_den ? fi.delay_den : 100);
+    pf_image raw; pf_apng_raw_frame(a, 1, NULL, &raw, &fi);   /* one frame's own pixels, any output layout */
+    pf_image_free(&raw);
+    pf_apng_free(a);
+}
+/* encode: frames of their own size + offsets, dispose / blend ops, delays */
+pf_apng_frame fr[2] = { { px0, 0, { W, H, 0, 0, 1, 10, PF_DISPOSE_NONE, PF_BLEND_SOURCE } },
+                        { px1, 0, { 16, 16, 8, 8, 1, 10, PF_DISPOSE_PREVIOUS, PF_BLEND_OVER } } };
+pf_encode_apng(W, H, PF_COLOR_RGBA, 8, fr, 2, 0 /* loop forever */, NULL, 0, &eopt, &out, &out_size);
+```
+
+Semantics follow the APNG spec / browsers (canvas starts transparent black, first-frame DISPOSE_PREVIOUS acts as
+BACKGROUND, 8-bit source-over blending). Invalid animation structure (sequence numbers, frame count, regions, ...)
+gives `PF_ERR_APNG`; `pf_decode` ignores APNG chunks and returns the default image. Files without acTL open as a
+one-frame still image. Tested against Philip Taylor's APNG suite; raw frames and fcTL fields are identical to the
+png crate's for every valid suite file.
+
+### Symbol hygiene
+
+`libpngfast.a` / `libpngfast.so` export only the functions declared `PF_API` in `pngfast.h` (export list generated
+from the header): the shared library uses a linker version script, the static archive is one partially linked
+object (`ld -r`) whose other globals are localized with `objcopy`. The vendored libdeflate and zlib-ng (including
+zlib-ng internals such as `deflate_medium`, `crc32_*`, `functable`) therefore never clash with a system zlib,
+zlib-ng or libdeflate; ctest `symbols` (nm check) and `link_test` (links against stock static zlib-ng in both
+flavours and libdeflate) enforce it. `-DPNGFAST_HIDE_SYMBOLS=OFF` (or non-ELF platforms) skips the localization.
+
 ## Layout
 
 | path | contents |
@@ -77,14 +163,17 @@ what `PF_OUTPUT_RAW` decoding returns.
 | `src/filter_enc.c` | encoder filters + fused one-pass adaptive cost (SSE2/AVX2, portable scalar) |
 | `src/encode.c` | validation, presets / content probing, backend policy (`graphics_cfg` / `photo_cfg`), chunk writer |
 | `src/deflate_backend.{c,h}` | the encoder's only deflate interface: libdeflate (levels, png-fast, streamed png-ultra) and zlib-ng |
+| `src/metadata.c` | ancillary chunk reader / writer, limits |
+| `src/stream.c` | `pf_decoder` (push decoding) and `pf_encoder` (row-push encoding) |
+| `src/apng.c` | APNG validation, frame iterator / composition, raw frames, `pf_encode_apng` |
 | `src/common.c` | CPU dispatch, allocator hooks, status strings |
 | `third_party/zlib-ng` | optional, unmodified zlib-ng `develop` f18efb8, native `zng_*` API ([PNGFAST_VENDOR.md](third_party/zlib-ng/PNGFAST_VENDOR.md)) |
 | `third_party/libdeflate` | libdeflate v1.26 + pngfast changes ([PNGFAST_CHANGES.md](third_party/libdeflate/PNGFAST_CHANGES.md), [patch](third_party/libdeflate/pngfast-changes.patch)); symbols renamed `pf_libdeflate_*` |
 | `tests/` | conformance (vs png crate refs), round trips, API tests, data |
-| `fuzz/` | `fuzz_decode`, `fuzz_roundtrip` (libFuzzer / AFL++ / standalone mutation driver) |
+| `fuzz/` | `fuzz_decode` (+ metadata), `fuzz_roundtrip`, `fuzz_stream` (streaming vs one-shot, APNG) (libFuzzer / AFL++ / standalone mutation driver) |
 | `bench/` | `pfbench` (C), `run.py` (driver), `results/` |
 | `tools/` | `pngfast-cli`, `rsref` (Rust: png crate / image-rs / fdeflate reference + benchmark) |
-| `scripts/` | `sanitize.sh`, `gen_libdeflate_patch.sh` |
+| `scripts/` | `sanitize.sh`, `check_symbols.sh`, `gen_libdeflate_patch.sh` |
 
 ## Presets
 
