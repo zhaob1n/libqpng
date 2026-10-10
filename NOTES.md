@@ -136,3 +136,5 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   (hash chains polluted by run positions? depth 1024 gives nothing, 4096 helps). Longer blocks (1-4 MB soft
   max) only -0.6%. Smaller blocks worse. TODO: run-aware chain skipping in hc_matchfinder (jump over
   candidates inside the same run) - the likely real fix for both DEFAULT and BEST on alpha graphics.
+  Tried: not inserting the interior of long periodic (offset <= 8) matches into the hash chains: worse
+  (+0.3..5%), so chain pollution is not the cause. Open: compare lazy-evaluation decisions token by token.
