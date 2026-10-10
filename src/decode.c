@@ -52,7 +52,9 @@ static void process_rows(pf_dec *c, size_t pos, int final) {
                     int f1 = src[rs - 1], f2 = src[2 * rs - 1], f3 = src[3 * rs - 1];
                     if (f1 > 4 || f2 > 4 || f3 > 4) { c->err = PF_ERR_FILTER; c->y = c->H; return; }
                     if (f == 4 && f1 == 4 && f2 == 4 && f3 == 4) {
+#if PF_X86
                         pf__quad_paeth_avx2(dst, src, prev, stride, rs, stride, bpp); prev = dst + 3 * stride; y += 4; continue;
+#endif
                     }
                 } else if (!final) break;
             }

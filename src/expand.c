@@ -83,9 +83,11 @@ void pf__xform_row(const pf_xform *c, const uint8_t *s, uint8_t *o, uint32_t w) 
 }
 void pf__swap16(uint8_t *p, size_t n) {   /* SSE2: (x << 8) | (x >> 8) per 16-bit lane */
     size_t i = 0;
+#if PF_X86
     for (; i + 16 <= n; i += 16) {
         __m128i v = _mm_loadu_si128((const __m128i *)(p + i));
         _mm_storeu_si128((__m128i *)(p + i), _mm_or_si128(_mm_slli_epi16(v, 8), _mm_srli_epi16(v, 8)));
     }
+#endif
     for (; i + 1 < n; i += 2) { uint8_t t = p[i]; p[i] = p[i + 1]; p[i + 1] = t; }
 }

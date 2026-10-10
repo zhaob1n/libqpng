@@ -1,5 +1,5 @@
 #!/bin/sh
-# CI-style sanitizer run: ASan+UBSan build, full ctest (incl. fuzz smoke), longer mutation fuzzing,
+# CI-style sanitizer run: ASan+UBSan build, full ctest (incl. fuzz smoke), same for the portable scalar build, longer mutation fuzzing,
 # and (when clang is available) short libFuzzer sessions seeded with PngSuite.
 #   scripts/sanitize.sh [ITERS] [LIBFUZZER_SECONDS]
 set -eu
@@ -13,6 +13,12 @@ cmake -S "$ROOT" -B "$B" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER="$
 cmake --build "$B" -j"$(nproc)"
 export ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
 (cd "$B" && ctest --output-on-failure)
+echo "== portable scalar build (-DPNGFAST_NO_SIMD), sanitized"
+P=$ROOT/build-asan-portable
+cmake -S "$ROOT" -B "$P" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER="$CC" -DCMAKE_C_FLAGS=-DPNGFAST_NO_SIMD \
+      -DPNGFAST_SANITIZE=ON -DPNGFAST_BUILD_TESTS=ON >/dev/null
+cmake --build "$P" -j"$(nproc)"
+(cd "$P" && ctest --output-on-failure)
 SEEDS=$(ls "$ROOT"/tests/data/pngsuite/*.png "$ROOT"/tests/data/formats_small/*.png)
 echo "== mutation fuzzing: $ITERS mutations per seed"
 PF_FUZZ_ITERS=$ITERS "$B/fuzz_decode" $SEEDS

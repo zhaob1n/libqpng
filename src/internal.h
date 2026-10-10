@@ -6,12 +6,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <emmintrin.h>
-#include <immintrin.h>
 #include "pf_libdeflate.h"
 
-#if !defined(__x86_64__) && !defined(_M_X64)
-#  error "pngfast currently targets x86-64 (SSE2 baseline, AVX2 runtime-dispatched)"
+/* SIMD: x86-64 (SSE2 baseline, AVX2 runtime-dispatched). Everything else, or -DPNGFAST_NO_SIMD, builds the
+ * portable scalar code paths (same output). */
+#if (defined(__x86_64__) || defined(_M_X64)) && !defined(PNGFAST_NO_SIMD)
+#  define PF_X86 1
+#  include <emmintrin.h>
+#  include <immintrin.h>
+#else
+#  define PF_X86 0
 #endif
 
 #define PF_INLINE static inline __attribute__((always_inline))
@@ -42,7 +46,9 @@ typedef void (*pf_pair_fn)(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, ui
                            size_t n, int bpp);
 void pf__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, int bpp);
 pf_pair_fn pf__pair_for_bpp(int f0, int f1, int bpp);
+#if PF_X86
 void pf__quad_paeth_avx2(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, size_t stride, size_t rs, size_t n, int bpp);
+#endif
 
 /* ---- expand.c: output transforms applied to unfiltered rows ---- */
 enum { XF_NONE, XF_SWAP16, XF_PAL, XF_GRAY, XF_TRNS8, XF_TRNS16 };

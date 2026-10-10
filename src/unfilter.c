@@ -69,6 +69,7 @@ static void unf_scalar(int f, uint8_t *dst, const uint8_t *src, const uint8_t *p
     }
 }
 
+#if PF_X86
 /* Up: pure vertical add, vectorised (AVX2 clone selected at load time via ifunc). */
 __attribute__((target_clones("avx2", "default")))
 static void unf_up(uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n) {
@@ -195,6 +196,7 @@ static void pairw_##F0##F1(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, ui
     STW_LAST(d1 + n - bpp, a1, bpp);                                                                              \
 }
 DEF_PAIRW(1, 1) DEF_PAIRW(1, 3) DEF_PAIRW(1, 4) DEF_PAIRW(3, 1) DEF_PAIRW(3, 3) DEF_PAIRW(3, 4) DEF_PAIRW(4, 1) DEF_PAIRW(4, 3) DEF_PAIRW(4, 4)
+#endif /* PF_X86 */
 /* bpp 1/2: scalar two-row wavefront (row y+1 lags row y by one pixel) -> two independent dependency chains */
 static inline __attribute__((always_inline)) int pred_s(int F, int a, int b, int c) {
     return F == 1 ? a : F == 2 ? b : F == 3 ? (a + b) >> 1 : paeth_s(a, b, c);
@@ -218,6 +220,7 @@ static void pairs##B##_##F0##F1(uint8_t *restrict d0, const uint8_t *restrict s0
 #define DEF_PAIRS_B(B) DEF_PAIRS(B,1,1) DEF_PAIRS(B,1,3) DEF_PAIRS(B,1,4) DEF_PAIRS(B,3,1) DEF_PAIRS(B,3,3) \
                        DEF_PAIRS(B,3,4) DEF_PAIRS(B,4,1) DEF_PAIRS(B,4,3) DEF_PAIRS(B,4,4)
 DEF_PAIRS_B(1) DEF_PAIRS_B(2)
+#if PF_X86
 pf_pair_fn pf__pair_for_bpp(int f0, int f1, int bpp) {
     static const pf_pair_fn t[5][5] = { [1] = { [1] = pairw_11, [3] = pairw_13, [4] = pairw_14 },
                                      [3] = { [1] = pairw_31, [3] = pairw_33, [4] = pairw_34 },
@@ -233,6 +236,20 @@ pf_pair_fn pf__pair_for_bpp(int f0, int f1, int bpp) {
     if (bpp <= 4) return pair_for(f0, f1);
     return (f0 < 5 && f1 < 5) ? t[f0][f1] : NULL;
 }
+#else
+/* portable: scalar two-row wavefront for every pixel size */
+DEF_PAIRS_B(3) DEF_PAIRS_B(4) DEF_PAIRS_B(6) DEF_PAIRS_B(8)
+#define PAIR_TABLE(B) { [1] = { [1] = pairs##B##_11, [3] = pairs##B##_13, [4] = pairs##B##_14 }, \
+                        [3] = { [1] = pairs##B##_31, [3] = pairs##B##_33, [4] = pairs##B##_34 }, \
+                        [4] = { [1] = pairs##B##_41, [3] = pairs##B##_43, [4] = pairs##B##_44 } }
+pf_pair_fn pf__pair_for_bpp(int f0, int f1, int bpp) {
+    static const pf_pair_fn t[9][5][5] = { [1] = PAIR_TABLE(1), [2] = PAIR_TABLE(2), [3] = PAIR_TABLE(3),
+                                           [4] = PAIR_TABLE(4), [6] = PAIR_TABLE(6), [8] = PAIR_TABLE(8) };
+    return (bpp >= 1 && bpp <= 8 && f0 < 5 && f1 < 5) ? t[bpp][f0][f1] : NULL;
+}
+#undef PAIR_TABLE
+#endif
+#if PF_X86
 #define DEF_ROWW(F)                                                                                               \
 static void roww_##F(uint8_t *d, const uint8_t *s, const uint8_t *p, size_t n, int bpp) {                         \
     const __m128i z = _mm_setzero_si128(), ff = _mm_set1_epi16(0xff);                                             \
@@ -245,7 +262,13 @@ static void roww_##F(uint8_t *d, const uint8_t *s, const uint8_t *p, size_t n, i
 }
 DEF_ROWW(1) DEF_ROWW(3) DEF_ROWW(4)
 
+#endif /* PF_X86 */
+
 void pf__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, int bpp) {
+#if !PF_X86
+    if (f == 0 || (f == 2 && !prev)) memmove(dst, src, n);
+    else unf_scalar(f, dst, src, prev, n, bpp);
+#else
     if ((bpp == 6 || bpp == 8) && n >= 16) {
         switch (f) {
         case 0: memmove(dst, src, n); return;
@@ -263,8 +286,10 @@ void pf__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *pr
     case 3: if (prev) unf_avg_px(dst, src, prev, n, bpp); else unf_scalar(3, dst, src, prev, n, bpp); break;
     case 4: if (prev) unf_paeth_px(dst, src, prev, n, bpp); else unf_sub_px(dst, src, n, bpp); break;
     }
+#endif
 }
 
+#if PF_X86
 #define LDX(p) _mm_unpacklo_epi8(_mm_cvtsi32_si128(ld32(p)), _mm_setzero_si128())
 /* Four consecutive Paeth rows as a wavefront: row g lags row g-1 by one pixel; 4 x 16-bit-lane pixels per AVX2 vector. */
 __attribute__((target("avx2"))) void pf__quad_paeth_avx2(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, size_t stride,
@@ -302,4 +327,4 @@ __attribute__((target("avx2"))) void pf__quad_paeth_avx2(uint8_t *d0, const uint
                 if (j + 1 < npx) st32(dp, o[g]); else memcpy(dp, &o[g], bpp); } }
     }
 }
-
+#endif /* PF_X86 */

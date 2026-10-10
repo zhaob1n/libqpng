@@ -9,6 +9,7 @@
 #include "internal.h"
 
 /* ---- predictors on 16 / 32 independent bytes ---- */
+#if PF_X86
 static inline __m128i paeth_v16(__m128i a, __m128i b, __m128i c) {
     const __m128i z = _mm_setzero_si128();
     __m128i r[2];
@@ -45,11 +46,33 @@ __attribute__((target("avx2"))) static inline __m256i avg_v32(__m256i a, __m256i
     return _mm256_sub_epi8(_mm256_avg_epu8(a, b), _mm256_and_si256(_mm256_xor_si256(a, b), _mm256_set1_epi8(1)));
 }
 
+#endif
+
 static inline int pred_scalar(int f, int a, int b, int c) {
     switch (f) { case 0: return 0; case 1: return a; case 2: return b; case 3: return (a + b) >> 1; default: return paeth_s(a, b, c); }
 }
 static inline int absres(int r) { int v = (int8_t)r; return v < 0 ? -v : v; }
 
+/* ---- portable scalar versions (same results) ---- */
+#if !PF_X86
+static void filt_row_scalar(int f, uint8_t *out, const uint8_t *cur, const uint8_t *prev, size_t n, int bpp) {
+    size_t i = 0;
+    if (f == 0) { memcpy(out, cur, n); return; }
+    for (; i < (size_t)bpp && i < n; i++) out[i] = (uint8_t)(cur[i] - pred_scalar(f, 0, prev[i], 0));
+    for (; i < n; i++) out[i] = (uint8_t)(cur[i] - pred_scalar(f, cur[i - bpp], prev[i], prev[i - bpp]));
+}
+static void costs_scalar(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[5], int paeth) {
+    uint64_t s[5] = { 0, 0, 0, 0, 0 };
+    for (size_t i = 0; i < n; i++) {
+        const int a = i >= (size_t)bpp ? cur[i - bpp] : 0, c = i >= (size_t)bpp ? prev[i - bpp] : 0;
+        for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - pred_scalar(f, a, prev[i], c));
+    }
+    for (int f = 0; f < 5; f++) cost[f] = s[f];
+    if (!paeth) cost[4] = UINT64_MAX;
+}
+#endif
+
+#if PF_X86
 /* ---- write one filtered row ---- */
 static void filt_row_sse2(int f, uint8_t *out, const uint8_t *cur, const uint8_t *prev, size_t n, int bpp) {
     size_t i = 0;
@@ -149,6 +172,7 @@ __attribute__((target("avx2"))) static void costs5_avx2(const uint8_t *cur, cons
                                                         uint64_t cost[5]) {
     costs_avx2(cur, prev, n, bpp, cost, 1);
 }
+#endif /* PF_X86 */
 
 void pf__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int mode) {
     pf__filter_rows(dst, px, stride, 0, h, n, bpp, mode);
@@ -156,7 +180,9 @@ void pf__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h
 
 void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0, uint32_t y1, size_t n, int bpp,
                      int mode) {
+#if PF_X86
     const int avx2 = pf__have_avx2();
+#endif
     uint8_t zrow_small[4096 + 64];
     /* the all-zero predecessor of row 0 (only needed if row 0 is in range) */
     uint8_t *zrow = zrow_small;
@@ -171,10 +197,14 @@ void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0
         int f = mode;
         if (mode == PF_FILTER_ADAPTIVE || mode == PF__FILTER_ADAPTIVE_GFX || mode == PF__FILTER_ADAPTIVE_FLAT) {
             uint64_t cost[5];
+#if PF_X86
             if (mode == PF__FILTER_ADAPTIVE_FLAT)
                 (avx2 ? costs4_avx2 : costs4_sse2)(cur, prev, n, bpp, cost);
             else
                 (avx2 ? costs5_avx2 : costs5_sse2)(cur, prev, n, bpp, cost);
+#else
+            costs_scalar(cur, prev, n, bpp, cost, mode != PF__FILTER_ADAPTIVE_FLAT);
+#endif
             f = 0;
             for (int k = 1; k < 5; k++) if (cost[k] < cost[f]) f = k;
             /* graphics: Up whenever it is within 2x of the best residual sum (repeated rows / zero runs
@@ -182,7 +212,11 @@ void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0
             if (mode != PF_FILTER_ADAPTIVE && cost[PF_FILTER_UP] <= 2 * cost[f]) f = PF_FILTER_UP;
         }
         o[0] = (uint8_t)f;
+#if PF_X86
         if (avx2) filt_row_avx2(f, o + 1, cur, prev, n, bpp); else filt_row_sse2(f, o + 1, cur, prev, n, bpp);
+#else
+        filt_row_scalar(f, o + 1, cur, prev, n, bpp);
+#endif
     }
     if (zrow != zrow_small) free(zrow);
 }

@@ -3,3 +3,4 @@ tools/rsref/target*/
 *.o
 build-prof/
 build-dev/
+build-asan-portable/

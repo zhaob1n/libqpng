@@ -3,7 +3,11 @@
 
 int pf__have_avx2(void) {
     static int v = -1;   /* benign race: every thread computes the same value */
+#if PF_X86
     if (v < 0) { __builtin_cpu_init(); v = __builtin_cpu_supports("avx2") ? 1 : 0; }
+#else
+    v = 0;
+#endif
     return v;
 }
 
