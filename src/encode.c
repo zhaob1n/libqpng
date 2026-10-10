@@ -32,13 +32,17 @@ static struct libdeflate_compressor *make_compressor(int level, int depth, int n
 
 /*
  * Presets (measured choices; see NOTES.md and README "Presets"):
- *  FASTEST  Up filter + run-only png-fast deflate.
- *  FAST     adaptive filter + png-fast deflate (hashing adapts per block).
- *  DEFAULT  1. probe: Up-biased adaptive + png-fast on a row sample (reused as the filter trial); ratio >= GRAPHICS_RATIO means graphics-like content.
- *           2. filter trial with png-fast: graphics -> also filter None, 8-bit palette -> also Paeth.
- *           3. graphics: recompress the winner at level 6 (7 for alpha / 16-bit);
- *              16-bit photos: also level 6, keep the smaller; other photos: keep the png-fast stream.
- *  BEST     steps 1-2, then level 9 (graphics) or 10 (photos, near-optimal parsing).
+ *  FASTEST  Up filter + png-ultra (single pass, runs only, sampled Huffman codes), streamed in row chunks.
+ *  FAST     adaptive filter + png-ultra / png-fast hybrid, streamed.
+ *  DEFAULT  1. probe: Up-biased adaptive filter (no Paeth for opaque images) + png-fast on a row sample;
+ *              ratio >= GRAPHICS_RATIO means graphics-like content. The sample doubles as the filter trial.
+ *           2. opaque graphics: same sample with filter None (4% allowance at depth <= 8), keep the winner;
+ *              alpha graphics keep the Up-biased adaptive filter; photos: adaptive + png-fast over the image,
+ *              8-bit palette photos also try Paeth.
+ *           3. graphics: alpha 8-bit L8/48/258, None-filtered 8-bit RGB L4/4/16, other RGB L5/8/32, else L5;
+ *              16-bit photos: also L6, keep the smaller; other photos: keep the png-fast stream.
+ *  BEST     steps 1-2, then graphics: L10/48/96 (bounded near-optimal) for alpha or 16-bit, else L9;
+ *           photos: L8, keeping the png-fast stream if smaller.
  * An explicit filter or deflate_level in pf_encode_options disables the probing.
  */
 #define GRAPHICS_RATIO 6
@@ -249,12 +253,12 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
                                                            : zcompress(5, 8, 32, filt, rawn, z, zcap, &st))
                : zcompress(5, 0, 0, filt, rawn, z, zcap, &st);
         } else if (zn && graphics) {
-            zn = alpha || depth == 16 ? zcompress(10, 64, 258, filt, rawn, z, zcap, &st)
+            zn = alpha || depth == 16 ? zcompress(10, 48, 96, filt, rawn, z, zcap, &st)   /* bounded near-optimal */
                                       : zcompress(9, 0, 0, filt, rawn, z, zcap, &st);
         } else if (zn && (best || depth == 16)) {
-            /* photos. BEST: level 10. DEFAULT 16-bit: level 6, png-fast is weakest there (noisy low bytes).
+            /* photos. BEST: level 8 (L10 is 2x slower for ~1.5%; L8 already beats zlib-rs 9). DEFAULT 16-bit: level 6, png-fast is weakest there (noisy low bytes).
              * Either way the png-fast stream already in z is kept if smaller. */
-            size_t an = zcompress(best ? 10 : 6, 0, 0, filt, rawn, tmp, zcap, &st);
+            size_t an = zcompress(best ? 8 : 6, 0, 0, filt, rawn, tmp, zcap, &st);
             if (!an) zn = 0;
             else if (an < zn) { memcpy(z, tmp, an); zn = an; }
         }
