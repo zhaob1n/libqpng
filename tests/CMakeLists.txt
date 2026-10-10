@@ -4,7 +4,7 @@ foreach(t api conformance roundtrip)
 endforeach()
 # test_deflate uses the vendored libdeflate directly (renamed symbols inside the pngfast library)
 add_executable(test_deflate test_deflate.c)
-target_link_libraries(test_deflate PRIVATE pngfast)
+target_link_libraries(test_deflate PRIVATE pngfast_internal)
 target_include_directories(test_deflate PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/third_party/libdeflate)
 find_package(ZLIB)
 if(ZLIB_FOUND)   # streams must also inflate with stock zlib
@@ -29,3 +29,13 @@ add_test(NAME fuzz_decode_smoke COMMAND fuzz_decode ${SEEDS})
 set_tests_properties(fuzz_decode_smoke PROPERTIES ENVIRONMENT PF_FUZZ_ITERS=300)
 add_test(NAME fuzz_roundtrip_smoke COMMAND fuzz_roundtrip ${SEEDS})
 set_tests_properties(fuzz_roundtrip_smoke PROPERTIES ENVIRONMENT PF_FUZZ_ITERS=40)
+# symbol hygiene: only the public API may be exported; libpngfast.a must link next to stock zlib-ng / libdeflate
+if(PNGFAST_HIDE_SYMBOLS AND NOT APPLE AND NOT WIN32)
+  add_test(NAME symbols COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_symbols.sh ${PROJECT_BINARY_DIR}/pngfast.exports
+           $<TARGET_FILE:pngfast>)
+  if(NOT PNGFAST_BUILD_SHARED AND NOT PNGFAST_SANITIZE AND NOT PNGFAST_LIBFUZZER)
+    add_test(NAME link_test COMMAND sh ${PROJECT_SOURCE_DIR}/tests/link_test.sh $<TARGET_FILE:pngfast>
+             ${PROJECT_SOURCE_DIR} ${PROJECT_BINARY_DIR}/link_test ${CMAKE_C_COMPILER})
+    set_tests_properties(link_test PROPERTIES TIMEOUT 600)
+  endif()
+endif()

@@ -34,4 +34,9 @@ if command -v clang >/dev/null 2>&1; then
 else
   echo "clang not found: libFuzzer sessions skipped (standalone mutation fuzzing done above)"
 fi
+echo "== shared library: exported symbols"
+S=$ROOT/build-shared
+cmake -S "$ROOT" -B "$S" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DPNGFAST_BUILD_SHARED=ON >/dev/null
+cmake --build "$S" -j"${JOBS:-4}"
+(cd "$S" && ctest --output-on-failure -R "symbols|api|roundtrip$")
 echo "sanitize: OK"

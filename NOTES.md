@@ -177,3 +177,18 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   --prefix-symbols / a partial link, or a version script for the shared build. ga8 BEST: chain/lazy tuning
   per alpha content. Probe filter choice was tuned for libdeflate; re-tune for zlib-ng L6 (None allowance).
   zlib-ng memLevel 8 vs 9 not measured separately.
+
+## Phase 5 (Oct 10, from 22:08; box crashed ~23:05 and was restored to af6c9f5 — redone from 22:45)
+* After the restore cmake/clang/zlib1g-dev were missing (apt reinstalled) and build dirs + tools/rsref/target
+  were gone (rsref rebuilt). Long commands now run in the background with timeout + nice, logs in /tmp.
+* Item 1 DONE (symbol hygiene). zlib-ng's ZLIB_SYMBOL_PREFIX only renames the public zng_* names (internal ones such
+  as deflate_medium, crc32_*, alloc_deflate stay global), so pngfast hides everything itself:
+  - all objects hidden visibility (zlib-ng target: C_VISIBILITY_PRESET hidden);
+  - export list generated at configure time from the `PF_API` lines of pngfast.h (build/pngfast.exports + .map);
+  - shared: version script PNGFAST_1 { global: <api>; local: *; };
+  - static: ld -r of all objects -> objcopy --keep-global-symbols=pngfast.exports -> one-object libpngfast.a
+    (option PNGFAST_HIDE_SYMBOLS, default ON; ELF only). pngfast_internal (un-localized) for test_deflate/pfbench.
+  - ctest `symbols` (scripts/check_symbols.sh: nm vs export list) and `link_test` (tests/link_test.sh builds stock
+    static zlib-ng native + zlib-compat and libdeflate with upstream names once under build/link_test, links them
+    with libpngfast.a, uses both sides). Negative control: libpngfast_internal.a -> "multiple definition".
+    sanitize.sh also builds the shared lib and runs `symbols`.
