@@ -1,5 +1,5 @@
 //! rsref: reference + benchmark tool for the Rust side (png crate git, image-rs, fdeflate).
-//!   rsref apng in.png out.raw               image-rs composed APNG frames, RGBA8, concatenated
+//!   rsref apng in.png out.raw               png crate raw APNG frames (IDENTITY), concatenated
 //!   rsref decode MODE in.png out.raw         MODE = raw (png IDENTITY) | expand (png EXPAND) | imagers (image-rs)
 //!   rsref encode SPEC in.png out.png         SPEC = PRESET[:FILTER[:DEFLATE]] (see encode_png)
 //!   rsref bench-decode MODE REPS files...    CSV: tool,op,param,file,rep,width,height,ns,bytes
@@ -73,21 +73,32 @@ fn main() {
     let tool = if cfg!(feature = "zlibrs") { "png-zlibrs" } else { "png" };
     match cmd {
         "apng" => {
-            // all composed frames (image-rs ApngDecoder, RGBA8) concatenated; prints "frames w h" or "error"
-            use image::AnimationDecoder;
+            // png crate raw APNG frames (IDENTITY), concatenated; prints one line per frame: "w h x y num den dispose blend"
             let d = std::fs::read(&a[1]).unwrap();
-            let r = image::codecs::png::PngDecoder::new(Cursor::new(&d)).and_then(|dec| dec.apng())
-                .and_then(|ap| ap.into_frames().collect_frames());
-            match r {
-                Ok(frames) => {
-                    let mut out = Vec::new();
-                    for f in &frames { out.extend_from_slice(f.buffer().as_raw()); }
-                    std::fs::write(&a[2], &out).unwrap();
-                    let (w, h) = frames.first().map(|f| f.buffer().dimensions()).unwrap_or((0, 0));
-                    println!("{} {w} {h}", frames.len());
+            let mut out = Vec::new();
+            match png::Decoder::new(Cursor::new(&d)).read_info() {
+                Ok(mut rd) => {
+                    let n = rd.info().animation_control().map(|c| c.num_frames).unwrap_or(1);
+                    let skip_default = rd.info().animation_control().is_some() && rd.info().frame_control().is_none();
+                    let mut buf = vec![0u8; rd.output_buffer_size().unwrap()];
+                    if skip_default { if rd.next_frame(&mut buf).is_err() { println!("error"); return; } }
+                    for _ in 0..n {
+                        match rd.next_frame(&mut buf) {
+                            Ok(fi) => {
+                                out.extend_from_slice(&buf[..fi.buffer_size()]);
+                                match rd.info().frame_control() {
+                                    Some(fc) => println!("{} {} {} {} {} {} {} {}", fc.width, fc.height, fc.x_offset, fc.y_offset,
+                                                         fc.delay_num, fc.delay_den, fc.dispose_op as u8, fc.blend_op as u8),
+                                    None => println!("{} {} 0 0 0 0 0 0", fi.width, fi.height),
+                                }
+                            }
+                            Err(e) => { println!("error {e}"); break; }
+                        }
+                    }
                 }
                 Err(e) => println!("error {e}"),
             }
+            std::fs::write(&a[2], &out).unwrap();
         }
         "decode" => { let d = std::fs::read(&a[2]).unwrap(); let (w, h, px) = decode_png(&d, &a[1]); std::fs::write(&a[3], &px).unwrap(); println!("{w} {h}"); }
         "encode" => { let d = std::fs::read(&a[2]).unwrap(); let s = load_src(&d); std::fs::write(&a[3], encode_png(&s, &a[1])).unwrap(); }
