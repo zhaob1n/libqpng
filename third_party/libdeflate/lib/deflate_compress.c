@@ -3168,6 +3168,20 @@ deflate_compress_png_ultra(struct libdeflate_compressor * restrict c,
 	} while (in_next != in_end);
 }
 
+LIBDEFLATEAPI void
+libdeflate_set_search_params(struct libdeflate_compressor *c,
+			     unsigned max_search_depth, unsigned nice_match_length)
+{
+	if (c->compression_level < 2 || c->impl == deflate_compress_png_fast ||
+	    c->impl == deflate_compress_png_ultra)
+		return;
+	if (max_search_depth)
+		c->max_search_depth = MAX(1, MIN(max_search_depth, 65535));
+	if (nice_match_length)
+		c->nice_match_length = MAX(DEFLATE_MIN_MATCH_LEN,
+					   MIN(nice_match_length, DEFLATE_MAX_MATCH_LEN));
+}
+
 LIBDEFLATEAPI size_t
 libdeflate_png_ultra_compress_chunk(struct libdeflate_compressor *c,
 				    struct libdeflate_png_ultra_state *st,

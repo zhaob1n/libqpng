@@ -39,7 +39,10 @@ static int parse_preset(const char *s) {
     return !strncmp(s, "fastest", 7) ? PF_PRESET_FASTEST : !strncmp(s, "fast", 4) ? PF_PRESET_FAST :
            !strncmp(s, "best", 4) ? PF_PRESET_BEST : PF_PRESET_DEFAULT;
 }
+static unsigned g_depth, g_nice;   /* deflate op: LEVEL/DEPTH/NICE overrides the level's search params */
 static int deflate_level(const char *s) {
+    const char *sl = strchr(s, '/');
+    if (sl) { g_depth = (unsigned)atoi(sl + 1); const char *s2 = strchr(sl + 1, '/'); if (s2) g_nice = (unsigned)atoi(s2 + 1); }
     return !strcmp(s, "pf") ? LIBDEFLATE_PNG_FAST_LEVEL : !strcmp(s, "pfrle") ? -1 : !strcmp(s, "pfhigh") ? -2 :
            !strcmp(s, "ultra") ? -3 : atoi(s);
 }
@@ -73,6 +76,7 @@ int main(int argc, char **argv) {
                 struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv == -3 ? LIBDEFLATE_PNG_ULTRA_LEVEL : lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL : lv);
                 if (lv == -1) libdeflate_set_png_min_match(c, 0);
                 if (lv == -2) libdeflate_set_png_params(c, 0, 9);
+                if (g_depth || g_nice) libdeflate_set_search_params(c, g_depth, g_nice);
                 size_t m = libdeflate_zlib_compress(c, buf, n, out, cap);
                 libdeflate_free_compressor(c);
                 long long dt = now_ns() - t0;
@@ -104,7 +108,8 @@ int main(int argc, char **argv) {
             pf_encode_options o; pf_encode_options_init(&o);
             o.preset = parse_preset(param);
             const char *c1 = strchr(param, ':');
-            if (c1) { o.filter = atoi(c1 + 1); const char *c2 = strchr(c1 + 1, ':'); if (c2) o.deflate_level = deflate_level(c2 + 1) < 0 ? 100 - deflate_level(c2 + 1) : deflate_level(c2 + 1); }
+            if (c1) { o.filter = atoi(c1 + 1); const char *c2 = strchr(c1 + 1, ':'); if (c2) { o.deflate_level = deflate_level(c2 + 1) < 0 ? 100 - deflate_level(c2 + 1) : deflate_level(c2 + 1);
+                                                                                         o.search_depth = (int)g_depth; o.nice_length = (int)g_nice; } }
             int pl = 0, tl = 0;
             o.palette = find_chunk(buf, n, "PLTE", &pl); o.palette_entries = o.palette ? pl / 3 : 0;
             o.trns = find_chunk(buf, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;

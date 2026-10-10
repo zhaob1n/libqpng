@@ -38,6 +38,9 @@ ENCODE = {
     # exploration
     **{f"pf-u{f}": [PFBENCH, "encode", f"fast:{f}:ultra", "{R}"] for f in (0, 1, 2, 4, 5)},
     "pf-fast-pf":       [PFBENCH, "encode", "fast:5:pf", "{R}"],
+    **{f"pf-n{n}": [PFBENCH, "encode", f"fast:0:{n}", "{R}"] for n in (1, 2, 3, 4, 5, 6, 7, 8, 9)},
+    "pf-l2":            [PFBENCH, "encode", "fast:5:2", "{R}"],
+    "pf-l4":            [PFBENCH, "encode", "fast:5:4", "{R}"],
     # exploration: adaptive filter + libdeflate level N
     **{f"pf-l{n}": [PFBENCH, "encode", f"fast:5:{n}", "{R}"] for n in (1, 3, 5, 6, 7, 8, 9, 10, 11, 12)},
 }
@@ -117,6 +120,8 @@ def main():
     if a.mode == "decode":
         table = {**table, **EXTRA_DECODE}
     cfgs = [c for c in (a.configs.split(",") if a.configs else table if a.mode != "decode" else DECODE)]
+    # ad-hoc pfbench configs: "pfx=PARAM" (e.g. pfx=fast:5:9/4096/258)
+    table = {**table, **{c: [PFBENCH, a.mode, c[4:], "{R}"] for c in cfgs if c.startswith("pfx=")}}
     if a.mode == "inflate":
         files = sorted(f"{RAWDIR}/png/{f.split('.idat.')[0]}.idat:{STREAMS}/{f}" for f in os.listdir(STREAMS)
                        if f.endswith(".zlib"))

@@ -151,6 +151,10 @@ typedef struct {
     const uint8_t *trns;       /* tRNS chunk payload (optional) */
     int trns_bytes;
     const pf_allocator *allocator; /* NULL = malloc/free */
+    /* advanced, with an explicit deflate_level 2..12: match finder search depth (1..65535) and nice match length
+     * (3..258); 0 = the level's default */
+    int search_depth;
+    int nice_length;
 } pf_encode_options;
 
 PF_API void pf_encode_options_init(pf_encode_options *opts);

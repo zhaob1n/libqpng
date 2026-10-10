@@ -103,6 +103,8 @@ fn main() {
                             let out = match param {
                                 "ultrafast" => { let mut c = fdeflate::UltraFastCompressor::new(Vec::new()).unwrap(); c.write_data(&data).unwrap(); c.finish().unwrap() }
                                 "rle" => { let mut c = fdeflate::Compressor::new_rle(Vec::new(), true).unwrap(); c.write_data(&data).unwrap(); c.finish().unwrap() }
+                                #[cfg(feature = "zlibrs")]
+                                l if l.starts_with("zrs") => { use std::io::Write; let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(l[3..].parse().unwrap())); e.write_all(&data).unwrap(); e.finish().unwrap() }
                                 l => { let mut c = fdeflate::Compressor::new(Vec::new(), l.parse().unwrap(), true).unwrap(); c.write_data(&data).unwrap(); c.finish().unwrap() }
                             };
                             ns = t.elapsed().as_nanos(); w = 0; h = 0; bytes = out.len();

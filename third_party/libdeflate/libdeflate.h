@@ -79,6 +79,16 @@ LIBDEFLATEAPI void
 libdeflate_set_png_min_match(struct libdeflate_compressor *compressor, unsigned min_len);
 
 /*
+ * Levels 2-12: override the match finder's search depth and nice match length
+ * (0 keeps the level's value; depth is clamped to 1..65535, nice to 3..258).
+ * For PNG graphics a deep search (zlib level 9 uses chains of 4096) is what
+ * makes the lazy parsers competitive.
+ */
+LIBDEFLATEAPI void
+libdeflate_set_search_params(struct libdeflate_compressor *compressor,
+			     unsigned max_search_depth, unsigned nice_match_length);
+
+/*
  * png-ultra only: streaming use.  Only offset-1 runs are emitted, so the
  * parser never needs more history than one byte, and the input can be fed in
  * chunks (each chunk becomes one DEFLATE block, or stored blocks if smaller).

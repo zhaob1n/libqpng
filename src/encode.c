@@ -15,8 +15,14 @@ static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uin
     return p + 12 + len;
 }
 
-static struct libdeflate_compressor *make_compressor(int level) {
-    if (level < PF_DEFLATE_PNGFAST) return libdeflate_alloc_compressor(level);
+/* level: 1..12 or PF_DEFLATE_*; depth / nice: search overrides for levels 2..12 (0 = default) */
+static struct libdeflate_compressor *make_compressor(int level, int depth, int nice) {
+    if (level < PF_DEFLATE_PNGFAST) {
+        struct libdeflate_compressor *c = libdeflate_alloc_compressor(level);
+        if (c && (depth > 0 || nice > 0))
+            libdeflate_set_search_params(c, depth > 0 ? (unsigned)depth : 0, nice > 0 ? (unsigned)nice : 0);
+        return c;
+    }
     if (level == PF_DEFLATE_PNGULTRA) return libdeflate_alloc_compressor(LIBDEFLATE_PNG_ULTRA_LEVEL);
     struct libdeflate_compressor *c = libdeflate_alloc_compressor(LIBDEFLATE_PNG_FAST_LEVEL);
     if (c && level == PF_DEFLATE_PNGFAST_RLE) libdeflate_set_png_min_match(c, 0);
@@ -37,9 +43,9 @@ static struct libdeflate_compressor *make_compressor(int level) {
  */
 #define GRAPHICS_RATIO 6
 
-static size_t zcompress(int level, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
+static size_t zcompress(int level, int depth, int nice, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
                         pf_status *st) {
-    struct libdeflate_compressor *c = make_compressor(level);
+    struct libdeflate_compressor *c = make_compressor(level, depth, nice);
     if (!c) { *st = PF_ERR_NOMEM; return 0; }
     size_t zn = libdeflate_zlib_compress(c, src, n, dst, cap);
     libdeflate_free_compressor(c);
@@ -60,7 +66,7 @@ static size_t zcompress_ultra(const uint8_t *px, size_t stride, uint32_t h, size
                               int hybrid, uint8_t *dst, size_t cap, const pf_allocator *A, pf_status *st) {
     const size_t row = n + 1;
     const size_t max_rows = (ULTRA_CHUNK_BIG + ULTRA_MIN_TAIL) / row + 2;
-    struct libdeflate_compressor *c = make_compressor(PF_DEFLATE_PNGULTRA);
+    struct libdeflate_compressor *c = make_compressor(PF_DEFLATE_PNGULTRA, 0, 0);
     uint8_t *buf = pf__alloc(A, max_rows * row + 1 + 64);
     struct libdeflate_png_ultra_state us = { 0, 0, 0 };
     uint32_t adler = 1;
@@ -168,12 +174,12 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
         zn = zcompress_ultra(pixels, stride, h, rowbytes, bpp, filter, opts->filter < 0 && !opts->deflate_level, z, zcap, A,
                              &st);
     } else if (!probe) {
-        zn = zcompress(level, filt, rawn, z, zcap, &st);
+        zn = zcompress(level, opts->search_depth, opts->nice_length, filt, rawn, z, zcap, &st);
     } else {
         /* 1. probe: adaptive filter + png-fast, written straight to the output */
         const int best = opts->preset == PF_PRESET_BEST;
         const int heavy = depth == 16 || color == PF_COLOR_GRAY_ALPHA || color == PF_COLOR_RGBA;
-        zn = zcompress(PF_DEFLATE_PNGFAST, filt, rawn, z, zcap, &st);
+        zn = zcompress(PF_DEFLATE_PNGFAST, 0, 0, filt, rawn, z, zcap, &st);
         const int graphics = zn && (double)rawn >= (double)zn * GRAPHICS_RATIO;
         /* 2. filter trial where the residual-sum heuristic is known to mislead: synthetic content (try None)
          *    and 8-bit palette indices (try Paeth everywhere). The png-fast size decides. */
@@ -189,7 +195,7 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
             if (!alt) { st = PF_ERR_NOMEM; zn = 0; }
             else {
                 pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, alt_filter);
-                size_t an = zcompress(PF_DEFLATE_PNGFAST, alt, rawn, tmp, zcap, &st);
+                size_t an = zcompress(PF_DEFLATE_PNGFAST, 0, 0, alt, rawn, tmp, zcap, &st);
                 if (!an) zn = 0;
                 else if (an < zn) {
                     uint8_t *t = filt; filt = alt; alt = t;
@@ -199,11 +205,11 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
         }
         /* 3. final compression of the chosen filtering */
         if (zn && graphics && !best) {
-            zn = zcompress(heavy ? 7 : 6, filt, rawn, z, zcap, &st);
+            zn = zcompress(heavy ? 7 : 6, 0, 0, filt, rawn, z, zcap, &st);
         } else if (zn && (best || depth == 16)) {
             /* BEST: level 9 (graphics) / 10 (photos). DEFAULT 16-bit photos: level 6, png-fast is weakest
              * there (noisy low bytes). Either way the png-fast stream already in z is kept if smaller. */
-            size_t an = zcompress(best ? (graphics ? 9 : 10) : 6, filt, rawn, tmp, zcap, &st);
+            size_t an = zcompress(best ? (graphics ? 9 : 10) : 6, 0, 0, filt, rawn, tmp, zcap, &st);
             if (!an) zn = 0;
             else if (an < zn) { memcpy(z, tmp, an); zn = an; }
         }
