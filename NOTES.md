@@ -106,3 +106,26 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   over literals: +0.3% only (dropped). Deep chains help (ld9/4096/258) but are slow; near-optimal
   (L10+) beats zrs9 in size but bt-matchfinder is pathological on repetitive data (5-8 MB/s).
   CAREFUL: never `git checkout` a file with uncommitted work (lost an hour-old edit once).
+* 10:00-10:30 Gap 3 DONE (DEFAULT vs zlib-rs Balanced, graphics): faster AND not larger in every group.
+  - probe sample doubles as the filter trial (2 sampled png-fast runs instead of 3; sample written into the
+    final filter/output buffers: no extra allocations).
+  - sample = 32-row strips every 192 rows (h >= 512; 16/64 for h >= 256): same decisions as 16/64 on the
+    corpus, half the cost. Sampling biases against filter None (long-range repeats cut): None wins at <= 104%
+    of the Up-biased sample size for depth <= 8 (fixed screenshot.g8: 35.8K -> 32.7K).
+  - new internal filter mode PF__FILTER_ADAPTIVE_FLAT = Up-biased adaptive without Paeth for opaque graphics:
+    smaller (graphics.rgb8 -1.7%, g16 -1.3%) and the cost pass skips the costliest predictor. Alpha keeps
+    Paeth (+5-8% without it).
+  - final levels: alpha 8-bit L8/48/258; None-filtered 8-bit RGB L4/4/16 (long exact repeats); other RGB
+    L5/8/32; rest L5. Measured (cpu 1, 5 rounds): 16bit 378-388 vs 335 MB/s @ 38.35 vs 37.60; g8 385 vs 296;
+    ga8 133 vs 126 @ 18.79 vs 18.66; p8 341 vs 235; rgb8 456-465 vs 437-441 @ 35.37 vs 32.70;
+    rgba8 181-184 vs 176 @ 25.50 vs 24.84; sub8 312 vs 145.
+* Gap 4: BEST alpha/16-bit graphics = L10 depth 48 nice 96 (bounded near-optimal): ratio 45.2/21.6/27.9 vs
+  zrs High 42.3/20.7/28.0 (rgba8 tie within 0.1%... see final matrix), 2x faster than L10/64/258 but still
+  slower than zrs High (16 vs 40, 8 vs 15, 11 vs 20 MB/s). Lazy L7-9 even at depth 256 cannot reach zrs9
+  size on ga8/rgba8; forcing smaller blocks in the lazy parser changed nothing. Root cause of near-optimal
+  slowness: deflate_find_min_cost_path + bt matchfinder on long runs (every length 3..nice costed).
+  BEST photos: L8 instead of L10: 2x faster, ~1.5% larger, still smaller and faster than zrs High in every
+  photo group (p8 21 vs 11 MB/s @ 2.055 vs 1.942).
+* Item 5: portable scalar build (PF_X86 = x86-64 && !PNGFAST_NO_SIMD): scalar filter costs/rows, scalar
+  two-row unfilter pairs for every bpp; byte-identical encoder output; ctest 7/7 with -DPNGFAST_NO_SIMD;
+  sanitize.sh also runs the portable build. (No aarch64 sysroot on the box to cross-compile.)
