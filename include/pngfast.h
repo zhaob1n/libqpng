@@ -20,9 +20,9 @@ extern "C" {
 #endif
 
 #define PNGFAST_VERSION_MAJOR 1
-#define PNGFAST_VERSION_MINOR 0
+#define PNGFAST_VERSION_MINOR 1
 #define PNGFAST_VERSION_PATCH 0
-#define PNGFAST_VERSION_STRING "1.0.0"
+#define PNGFAST_VERSION_STRING "1.1.0"
 
 #if defined(_WIN32) && defined(PNGFAST_SHARED)
 #  define PF_API __declspec(dllexport)
@@ -142,6 +142,24 @@ typedef enum {
 #define PF_DEFLATE_PNGFAST_HIGH 102  /* denser probing (skip shift 9) */
 #define PF_DEFLATE_PNGULTRA     103  /* single pass, runs only, sampled Huffman codes: fastest */
 
+/* Deflate backend (pf_encode_options.backend). AUTO picks per preset and content (see README "Backends").
+ * LIBDEFLATE: the vendored, modified libdeflate only (pngfast 1.0 behaviour). ZLIBNG: the optional vendored zlib-ng
+ * (built with PNGFAST_WITH_ZLIBNG; pf_backend_available() tells) for every stream the preset would otherwise give
+ * to libdeflate's levels, png-fast / png-ultra included. */
+typedef enum {
+    PF_BACKEND_AUTO = 0,
+    PF_BACKEND_LIBDEFLATE = 1,
+    PF_BACKEND_ZLIBNG = 2
+} pf_backend;
+
+/* zlib strategies for PF_BACKEND_ZLIBNG (same values as zlib's Z_*) */
+typedef enum {
+    PF_ZSTRATEGY_DEFAULT = 0, PF_ZSTRATEGY_FILTERED = 1, PF_ZSTRATEGY_HUFFMAN_ONLY = 2, PF_ZSTRATEGY_RLE = 3
+} pf_zstrategy;
+
+/* 1 if the backend is compiled into this library (AUTO and LIBDEFLATE: always) */
+PF_API int pf_backend_available(pf_backend backend);
+
 typedef struct {
     pf_preset preset;          /* default PF_PRESET_DEFAULT */
     int filter;                /* pf_filter, default PF_FILTER_AUTO */
@@ -155,6 +173,12 @@ typedef struct {
      * (3..258); 0 = the level's default */
     int search_depth;
     int nice_length;
+    /* since 1.1. backend: pf_backend (default AUTO). With PF_BACKEND_ZLIBNG, deflate_level is a zlib-ng level 1..9
+     * (0 = the preset's level: FASTEST 1, FAST 2, DEFAULT 6, BEST 9; the filter probing of DEFAULT/BEST stays on)
+     * and zlib_strategy a pf_zstrategy. search_depth / nice_length map to zlib's max_chain / nice_length.
+     * PF_ERR_UNSUPPORTED if the backend is not compiled in. */
+    int backend;
+    int zlib_strategy;
 } pf_encode_options;
 
 PF_API void pf_encode_options_init(pf_encode_options *opts);

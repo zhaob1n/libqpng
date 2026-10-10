@@ -1,0 +1,118 @@
+/* generic_functions.h -- generic C implementations for arch-specific functions.
+ * For conditions of distribution and use, see copyright notice in zlib.h
+ */
+
+#ifndef GENERIC_FUNCTIONS_H_
+#define GENERIC_FUNCTIONS_H_
+
+typedef uint32_t (*adler32_func)(uint32_t adler, const uint8_t *buf, size_t len);
+typedef uint32_t (*adler32_copy_func)(uint32_t adler, uint8_t *dst, const uint8_t *src, size_t len);
+typedef uint32_t (*compare256_func)(const uint8_t *src0, const uint8_t *src1);
+typedef uint32_t (*crc32_func)(uint32_t crc, const uint8_t *buf, size_t len);
+typedef uint32_t (*crc32_copy_func)(uint32_t crc, uint8_t *dst, const uint8_t *src, size_t len);
+typedef void     (*slide_hash_func)(deflate_state *s);
+
+uint32_t crc32_small(uint32_t crc, const uint8_t *buf, size_t len);
+
+#ifdef ADLER32_FALLBACK
+uint32_t adler32_c(uint32_t adler, const uint8_t *buf, size_t len);
+uint32_t adler32_copy_c(uint32_t adler, uint8_t *dst, const uint8_t *src, size_t len);
+#endif
+#ifdef CHUNKSET_FALLBACK
+uint8_t* chunkmemset_safe_c(uint8_t *out, uint8_t *from, size_t len, size_t left);
+#endif
+#ifdef COMPARE256_FALLBACK
+uint32_t compare256_8(const uint8_t *src0, const uint8_t *src1);
+uint32_t compare256_64(const uint8_t *src0, const uint8_t *src1);
+uint32_t compare256_c(const uint8_t *src0, const uint8_t *src1);
+#endif
+
+#ifdef CRC32_BRAID_FALLBACK
+uint32_t crc32_braid(uint32_t crc, const uint8_t *buf, size_t len);
+uint32_t crc32_copy_braid(uint32_t crc, uint8_t *dst, const uint8_t *src, size_t len);
+#endif
+
+/* Chorba is available whenever braid is needed as a fallback and hasn't been disabled. */
+#if defined(CRC32_BRAID_FALLBACK) && !defined(WITHOUT_CHORBA)
+#  define CRC32_CHORBA_FALLBACK
+#endif
+
+#ifdef CRC32_CHORBA_FALLBACK
+  uint32_t crc32_chorba(uint32_t crc, const uint8_t *buf, size_t len);
+  uint32_t crc32_copy_chorba(uint32_t crc, uint8_t *dst, const uint8_t *src, size_t len);
+#endif
+#ifdef CHUNKSET_FALLBACK
+void     inflate_fast_c(PREFIX3(stream) *strm, uint32_t start);
+void     inflate_fast_safe_c(PREFIX3(stream) *strm, uint32_t start);
+#endif
+#ifdef COMPARE256_FALLBACK
+uint32_t longest_match_c(deflate_state *const s, uint32_t cur_match);
+uint32_t longest_match_slow_knuth_c(deflate_state *const s, uint32_t cur_match);
+uint32_t longest_match_slow_roll_c(deflate_state *const s, uint32_t cur_match);
+#endif
+#ifdef SLIDE_HASH_FALLBACK
+void     slide_hash_c(deflate_state *s);
+void     slide_hash_head_c(deflate_state *s);
+#endif
+
+#ifdef DISABLE_RUNTIME_CPU_DETECTION
+// Generic fallbacks when no native implementation exists
+#  ifdef ADLER32_FALLBACK
+#    ifndef native_adler32
+#      define native_adler32 adler32_c
+#    endif
+#    ifndef native_adler32_copy
+#      define native_adler32_copy adler32_copy_c
+#    endif
+#  endif
+#  ifdef CHUNKSET_FALLBACK
+#    ifndef native_chunkmemset_safe
+#      define native_chunkmemset_safe chunkmemset_safe_c
+#    endif
+#    ifndef native_inflate_fast
+#      define native_inflate_fast inflate_fast_c
+#    endif
+#    ifndef native_inflate_fast_safe
+#      define native_inflate_fast_safe inflate_fast_safe_c
+#    endif
+#  endif
+#  ifdef COMPARE256_FALLBACK
+#    ifndef native_compare256
+#      define native_compare256 compare256_c
+#    endif
+#    ifndef native_longest_match
+#      define native_longest_match longest_match_c
+#    endif
+#    ifndef native_longest_match_slow_knuth
+#      define native_longest_match_slow_knuth longest_match_slow_knuth_c
+#    endif
+#    ifndef native_longest_match_slow_roll
+#      define native_longest_match_slow_roll longest_match_slow_roll_c
+#    endif
+#  endif
+#  ifdef CRC32_CHORBA_FALLBACK
+#    ifndef native_crc32
+#      define native_crc32 crc32_chorba
+#    endif
+#    ifndef native_crc32_copy
+#      define native_crc32_copy crc32_copy_chorba
+#    endif
+#  elif defined(CRC32_BRAID_FALLBACK)
+#    ifndef native_crc32
+#      define native_crc32 crc32_braid
+#    endif
+#    ifndef native_crc32_copy
+#      define native_crc32_copy crc32_copy_braid
+#    endif
+#  endif
+#  ifdef SLIDE_HASH_FALLBACK
+#    ifndef native_slide_hash
+#      define native_slide_hash slide_hash_c
+#    endif
+#    ifndef native_slide_hash_head
+#      define native_slide_hash_head slide_hash_head_c
+#    endif
+#  endif
+#endif
+
+#endif

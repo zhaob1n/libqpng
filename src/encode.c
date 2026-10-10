@@ -1,5 +1,6 @@
 /* encode.c - PNG encoder: validation, presets, filtering, deflate (vendored libdeflate), chunk writing. */
-#include "internal.h"
+#include "deflate_backend.h"
+#include <stdio.h>
 
 void pf_encode_options_init(pf_encode_options *o) {
     memset(o, 0, sizeof *o);
@@ -13,21 +14,6 @@ static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uin
     if (data && len) memcpy(p + 8, data, len);
     wbe32(p + 8 + len, libdeflate_crc32(0, p + 4, len + 4));
     return p + 12 + len;
-}
-
-/* level: 1..12 or PF_DEFLATE_*; depth / nice: search overrides for levels 2..12 (0 = default) */
-static struct libdeflate_compressor *make_compressor(int level, int depth, int nice) {
-    if (level < PF_DEFLATE_PNGFAST) {
-        struct libdeflate_compressor *c = libdeflate_alloc_compressor(level);
-        if (c && (depth > 0 || nice > 0))
-            libdeflate_set_search_params(c, depth > 0 ? (unsigned)depth : 0, nice > 0 ? (unsigned)nice : 0);
-        return c;
-    }
-    if (level == PF_DEFLATE_PNGULTRA) return libdeflate_alloc_compressor(LIBDEFLATE_PNG_ULTRA_LEVEL);
-    struct libdeflate_compressor *c = libdeflate_alloc_compressor(LIBDEFLATE_PNG_FAST_LEVEL);
-    if (c && level == PF_DEFLATE_PNGFAST_RLE) libdeflate_set_png_min_match(c, 0);
-    if (c && level == PF_DEFLATE_PNGFAST_HIGH) libdeflate_set_png_params(c, 0, 9);
-    return c;
 }
 
 /*
@@ -47,61 +33,46 @@ static struct libdeflate_compressor *make_compressor(int level, int depth, int n
  */
 #define GRAPHICS_RATIO 6
 
-/* minlen > 0 fixes libdeflate's minimum match length (levels 2-12; probed graphics paths use 3) */
-static size_t zcompress_ex(int level, int depth, int nice, int minlen, const uint8_t *src, size_t n, uint8_t *dst,
-                           size_t cap, pf_status *st) {
-    struct libdeflate_compressor *c = make_compressor(level, depth, nice);
-    if (!c) { *st = PF_ERR_NOMEM; return 0; }
-    if (minlen > 0 && level < PF_DEFLATE_PNGFAST) libdeflate_set_min_match_len(c, (unsigned)minlen);
-    size_t zn = libdeflate_zlib_compress(c, src, n, dst, cap);
-    libdeflate_free_compressor(c);
-    if (!zn) *st = PF_ERR_ENCODE;
-    return zn;
-}
-static size_t zcompress(int level, int depth, int nice, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
-                        pf_status *st) {
-    return zcompress_ex(level, depth, nice, 0, src, n, dst, cap, st);
-}
+#define GRAPHICS_RATIO 6
+
+/* content class from the probe, used by the backend policy */
+typedef struct { int best, alpha, depth, bpp, filter_none; } pf_content;
 
 /*
- * png-ultra streaming: rows are filtered into a small (L2-sized) buffer and compressed chunk by chunk, so the
- * filtered image is never materialised. Chunks are ~64 KiB, 256 KiB once the data compresses >= 4:1.
- * hybrid: chunks following a >= 4:1 chunk (graphics-like) use the Up filter instead of 'filter' (FAST preset).
- * Writes a zlib stream to dst; returns its size or 0.
+ * Final-stream policy for probed graphics (DEFAULT / BEST). backend = the user's choice (AUTO: measured per
+ * preset and content, NOTES.md "Phase 4"). Every entry is a measured choice; libdeflate graphics paths fix the
+ * minimum match at 3 (libdeflate would raise it because few literal values are in use: -1.5%, faster).
  */
-#define ULTRA_CHUNK      65536
-#define ULTRA_CHUNK_BIG  262144
-#define ULTRA_MIN_TAIL   4096
-static size_t zcompress_ultra(const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int filter,
-                              int hybrid, uint8_t *dst, size_t cap, const pf_allocator *A, pf_status *st) {
-    const size_t row = n + 1;
-    const size_t max_rows = (ULTRA_CHUNK_BIG + ULTRA_MIN_TAIL) / row + 2;
-    struct libdeflate_compressor *c = make_compressor(PF_DEFLATE_PNGULTRA, 0, 0);
-    uint8_t *buf = pf__alloc(A, max_rows * row + 1 + 64);
-    struct libdeflate_png_ultra_state us = { 0, 0, 0 };
-    uint32_t adler = 1;
-    size_t zn = 2, target = ULTRA_CHUNK;
-    if (!c || !buf || cap < 6) { *st = c && buf ? PF_ERR_ENCODE : PF_ERR_NOMEM; zn = 0; goto done; }
-    dst[0] = 0x78; dst[1] = 0x01;
-    for (uint32_t y = 0; y < h;) {
-        uint32_t k = (uint32_t)(target / row ? target / row : 1);
-        if (k > h - y) k = h - y;
-        if ((size_t)(h - y - k) * row < ULTRA_MIN_TAIL && (size_t)(h - y) <= max_rows) k = h - y;   /* no tiny tail */
-        const size_t len = (size_t)k * row;
-        pf__filter_rows(buf + 1, px, stride, y, y + k, n, bpp, hybrid && target == ULTRA_CHUNK_BIG ? PF_FILTER_UP : filter);
-        adler = libdeflate_adler32(adler, buf + 1, len);
-        y += k;
-        size_t o = libdeflate_png_ultra_compress_chunk(c, &us, buf + 1, len, y == h, dst + zn, cap - zn - 4);
-        if (!o) { *st = PF_ERR_ENCODE; zn = 0; goto done; }
-        zn += o;
-        buf[0] = buf[len];   /* the parser may look one byte back */
-        target = o * 4 < len ? ULTRA_CHUNK_BIG : ULTRA_CHUNK;
+static pf_zcfg graphics_cfg(const pf_content *c, int backend, int zlevel, int zstrategy, int depth, int nice) {
+    if (backend == PF_BACKEND_ZLIBNG)
+        return pf__zcfg(PF_BACKEND_ZLIBNG, zlevel ? zlevel : c->best ? 9 : 6, depth, nice, 0, zstrategy);
+#ifdef PF_POLICY_OVERRIDE   /* development: PF_POLICY="b:level:depth:nice:minlen:strategy" for the final graphics stream */
+    { const char *e = getenv("PF_POLICY"); int v[6] = { 0 };
+      if (e && sscanf(e, "%d:%d:%d:%d:%d:%d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) >= 2)
+          return pf__zcfg(v[0], v[1], v[2], v[3], v[4], v[5]); }
+#endif
+    if (!c->best) {
+        /* alpha 8-bit: lazy2 + long matches; None-filtered 8-bit RGB (flat UI, text = long exact repeats): greedy;
+         * other RGB: shallower search; rest: level 5 */
+        if (c->alpha && c->depth == 8) return pf__zcfg(PF_BACKEND_LIBDEFLATE, 8, 48, 258, 3, 0);
+        if (!c->alpha && c->bpp >= 3)
+            return c->filter_none && c->depth == 8 ? pf__zcfg(PF_BACKEND_LIBDEFLATE, 4, 4, 16, 3, 0)
+                                                   : pf__zcfg(PF_BACKEND_LIBDEFLATE, 5, 8, 32, 3, 0);
+        return pf__zcfg(PF_BACKEND_LIBDEFLATE, 5, 0, 0, 3, 0);
     }
-    wbe32(dst + zn, adler); zn += 4;
-done:
-    pf__free(A, buf);
-    libdeflate_free_compressor(c);
-    return zn;
+    /* BEST: bounded near-optimal for alpha / 16-bit, else level 9 */
+    return c->alpha || c->depth == 16 ? pf__zcfg(PF_BACKEND_LIBDEFLATE, 10, 48, 96, 3, 0)
+                                      : pf__zcfg(PF_BACKEND_LIBDEFLATE, 9, 0, 0, 3, 0);
+}
+
+/* photos: second stream to try against the png-fast one (level 0 = none). BEST: level 8 (L10 is 2x slower for
+ * ~1.5%; L8 already beats zlib-rs 9); DEFAULT 16-bit: level 6 (png-fast is weakest on noisy low bytes). */
+static pf_zcfg photo_cfg(const pf_content *c, int backend, int zlevel, int zstrategy, int depth, int nice) {
+    if (backend == PF_BACKEND_ZLIBNG)
+        return pf__zcfg(PF_BACKEND_ZLIBNG, zlevel ? zlevel : c->best ? 9 : 6, depth, nice, 0, zstrategy);
+    if (c->best) return pf__zcfg(PF_BACKEND_LIBDEFLATE, 8, 0, 0, 0, 0);
+    if (c->depth == 16) return pf__zcfg(PF_BACKEND_LIBDEFLATE, 6, 0, 0, 0, 0);
+    return pf__zcfg(PF_BACKEND_LIBDEFLATE, 0, 0, 0, 0, 0);
 }
 
 /*
@@ -122,7 +93,8 @@ static size_t sample_size(const uint8_t *px, size_t stride, uint32_t h, size_t n
         off += (size_t)k * row;
     }
     *raw = off;
-    return zcompress(PF_DEFLATE_PNGFAST, 0, 0, scratch, off, zbuf, zcap, st);
+    const pf_zcfg pngfast = pf__zcfg(PF_BACKEND_LIBDEFLATE, PF_DEFLATE_PNGFAST, 0, 0, 0, 0);
+    return pf__zcompress(&pngfast, scratch, off, zbuf, zcap, NULL, st);
 }
 
 pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, pf_color color, int depth,
@@ -157,23 +129,30 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     if ((uint64_t)h * (rowbytes + 1) > ((uint64_t)1 << 40)) return PF_ERR_LIMITS;
     const size_t rawn = (size_t)h * (rowbytes + 1);
 
+    const int backend = opts->backend;
+    if (backend < PF_BACKEND_AUTO || backend > PF_BACKEND_ZLIBNG) return PF_ERR_ARGUMENT;
+    if (!pf_backend_available((pf_backend)backend)) return PF_ERR_UNSUPPORTED;
+    if (opts->zlib_strategy < 0 || opts->zlib_strategy > PF_ZSTRATEGY_RLE) return PF_ERR_ARGUMENT;
+    const int zng = backend == PF_BACKEND_ZLIBNG;
     const int probe = opts->filter < 0 && !opts->deflate_level &&
                       (opts->preset == PF_PRESET_DEFAULT || opts->preset == PF_PRESET_BEST);
     int filter, level;
-    switch (opts->preset) {
-    case PF_PRESET_FASTEST: filter = PF_FILTER_UP; level = PF_DEFLATE_PNGULTRA; break;
-    case PF_PRESET_FAST: filter = PF_FILTER_ADAPTIVE; level = PF_DEFLATE_PNGULTRA; break;
-    case PF_PRESET_DEFAULT: filter = PF_FILTER_ADAPTIVE; level = PF_DEFLATE_PNGFAST; break;
-    case PF_PRESET_BEST: filter = PF_FILTER_ADAPTIVE; level = 10; break;
+    switch (opts->preset) {   /* zlib-ng forced: FASTEST 1 (deflate_quick), FAST 2, DEFAULT 6, BEST 9 */
+    case PF_PRESET_FASTEST: filter = PF_FILTER_UP; level = zng ? 1 : PF_DEFLATE_PNGULTRA; break;
+    case PF_PRESET_FAST: filter = PF_FILTER_ADAPTIVE; level = zng ? 2 : PF_DEFLATE_PNGULTRA; break;
+    case PF_PRESET_DEFAULT: filter = PF_FILTER_ADAPTIVE; level = zng ? 6 : PF_DEFLATE_PNGFAST; break;
+    case PF_PRESET_BEST: filter = PF_FILTER_ADAPTIVE; level = zng ? 9 : 10; break;
     default: return PF_ERR_ARGUMENT;
     }
     if (opts->filter >= 0) { if (opts->filter > PF_FILTER_ADAPTIVE) return PF_ERR_ARGUMENT; filter = opts->filter; }
     if (opts->deflate_level) level = opts->deflate_level;
-    if (!((level >= 1 && level <= 12) || level == PF_DEFLATE_PNGFAST || level == PF_DEFLATE_PNGFAST_RLE || level == PF_DEFLATE_PNGFAST_HIGH ||
-          level == PF_DEFLATE_PNGULTRA))
+    if (opts->search_depth < 0 || opts->search_depth > 65535 || opts->nice_length < 0 || opts->nice_length > 258)
         return PF_ERR_ARGUMENT;
+    const pf_zcfg explicit_cfg = pf__zcfg(zng ? PF_BACKEND_ZLIBNG : PF_BACKEND_LIBDEFLATE, level, opts->search_depth,
+                                          opts->nice_length, 0, zng ? opts->zlib_strategy : 0);
+    if (!pf__zcfg_valid(&explicit_cfg)) return PF_ERR_ARGUMENT;
 
-    const int stream = !probe && level == PF_DEFLATE_PNGULTRA;
+    const int stream = !probe && !zng && level == PF_DEFLATE_PNGULTRA;
     uint8_t *filt = NULL;
     if (!stream) {
         filt = pf__alloc(A, rawn + 64);
@@ -182,7 +161,7 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     }
 
     /* worst-case bound over all compression levels */
-    const size_t zcap = libdeflate_zlib_compress_bound(NULL, rawn);
+    const size_t zcap = pf__zbound(rawn);
     const size_t nchunks = zcap / 0x40000000u + 1;   /* IDAT chunks are split at 1 GiB */
     const size_t cap = 8 + 25 + (opts->palette ? 12 + 3 * (size_t)opts->palette_entries : 0) +
                        (opts->trns ? 12 + (size_t)opts->trns_bytes : 0) + 12 * nchunks + zcap + 12;
@@ -202,10 +181,10 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     pf_status st = PF_OK;
     size_t zn;
     if (stream) {
-        zn = zcompress_ultra(pixels, stride, h, rowbytes, bpp, filter, opts->filter < 0 && !opts->deflate_level, z, zcap, A,
-                             &st);
+        zn = pf__zcompress_ultra_rows(pixels, stride, h, rowbytes, bpp, filter, opts->filter < 0 && !opts->deflate_level,
+                                      z, zcap, A, &st);
     } else if (!probe) {
-        zn = zcompress(level, opts->search_depth, opts->nice_length, filt, rawn, z, zcap, &st);
+        zn = pf__zcompress(&explicit_cfg, filt, rawn, z, zcap, A, &st);
     } else {
         /* 1. content probe on a row sample (Up-biased adaptive filter, png-fast): ratio >= GRAPHICS_RATIO = graphics */
         const int best = opts->preset == PF_PRESET_BEST;
@@ -214,9 +193,11 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
         size_t sraw = 0, sz = sample_size(pixels, stride, h, rowbytes, bpp, gfx_filter, filt, z, zcap,
                                             &sraw, &st);
         const int graphics = sz && (double)sraw >= (double)sz * GRAPHICS_RATIO;
+        pf_content cc = { best, alpha, depth, bpp, 0 };
+        const pf_zcfg pngfast = pf__zcfg(PF_BACKEND_LIBDEFLATE, PF_DEFLATE_PNGFAST, 0, 0, 0, 0);
         uint8_t *tmp = NULL;
         zn = sz ? 1 : 0;   /* "no error so far" until a stream exists */
-        if (zn && (best || !graphics)) {
+        if (zn && (best || zng || !graphics)) {
             tmp = pf__alloc(A, zcap);
             if (!tmp) { st = PF_ERR_NOMEM; zn = 0; }
         }
@@ -233,41 +214,37 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
                  * None a 4% allowance at depth <= 8 (16-bit samples are large enough; measured on the corpus) */
                 else if (depth <= 8 ? nz * 100 <= gz * 104 : nz < gz) f = PF_FILTER_NONE;
             }
+            cc.filter_none = f == PF_FILTER_NONE;
             if (zn) pf__filter_image(filt, pixels, stride, h, rowbytes, bpp, f);
         } else if (zn && !graphics) {
             pf__filter_image(filt, pixels, stride, h, rowbytes, bpp, PF_FILTER_ADAPTIVE);
-            zn = zcompress(PF_DEFLATE_PNGFAST, 0, 0, filt, rawn, z, zcap, &st);
+            zn = pf__zcompress(&pngfast, filt, rawn, z, zcap, A, &st);
             if (zn && color == PF_COLOR_PALETTE && depth == 8) {
                 uint8_t *alt = pf__alloc(A, rawn + 64);
                 if (!alt) { st = PF_ERR_NOMEM; zn = 0; }
                 else {
                     pf__filter_image(alt, pixels, stride, h, rowbytes, bpp, PF_FILTER_PAETH);
-                    size_t an = zcompress(PF_DEFLATE_PNGFAST, 0, 0, alt, rawn, tmp, zcap, &st);
+                    size_t an = pf__zcompress(&pngfast, alt, rawn, tmp, zcap, A, &st);
                     if (!an) zn = 0;
                     else if (an < zn) { uint8_t *t = filt; filt = alt; alt = t; memcpy(z, tmp, an); zn = an; }
                     pf__free(A, alt);
                 }
             }
         }
-        /* 3. final compression of the chosen filtering. Graphics: minimum match length 3 (libdeflate would raise
-         *    it because few literal values are in use; short matches still pay here: -1.5%, slightly faster) */
-        if (zn && graphics && !best) {
-            /* alpha 8-bit graphics need lazy2 + long matches to stay below zlib-rs level 6; elsewhere level 5
-             * already compresses better than zlib-rs 6 thanks to the filter choice */
-            zn = alpha && depth == 8 ? zcompress_ex(8, 48, 258, 3, filt, rawn, z, zcap, &st)
-               /* RGB: shallower search; None-filtered 8-bit RGB (flat UI, text) is long exact repeats: greedy */
-               : !alpha && bpp >= 3 ? (f == PF_FILTER_NONE && depth == 8 ? zcompress_ex(4, 4, 16, 3, filt, rawn, z, zcap, &st)
-                                                           : zcompress_ex(5, 8, 32, 3, filt, rawn, z, zcap, &st))
-               : zcompress_ex(5, 0, 0, 3, filt, rawn, z, zcap, &st);
-        } else if (zn && graphics) {
-            zn = alpha || depth == 16 ? zcompress_ex(10, 48, 96, 3, filt, rawn, z, zcap, &st)   /* bounded near-optimal */
-                                      : zcompress_ex(9, 0, 0, 3, filt, rawn, z, zcap, &st);
-        } else if (zn && (best || depth == 16)) {
-            /* photos. BEST: level 8 (L10 is 2x slower for ~1.5%; L8 already beats zlib-rs 9). DEFAULT 16-bit: level 6, png-fast is weakest there (noisy low bytes).
-             * Either way the png-fast stream already in z is kept if smaller. */
-            size_t an = zcompress(best ? 8 : 6, 0, 0, filt, rawn, tmp, zcap, &st);
-            if (!an) zn = 0;
-            else if (an < zn) { memcpy(z, tmp, an); zn = an; }
+        /* 3. final compression of the chosen filtering (policy: graphics_cfg / photo_cfg) */
+        if (zn && graphics) {
+            const pf_zcfg g = graphics_cfg(&cc, backend, opts->deflate_level, opts->zlib_strategy, opts->search_depth,
+                                           opts->nice_length);
+            zn = pf__zcompress(&g, filt, rawn, z, zcap, A, &st);
+        } else if (zn) {
+            /* photos: the png-fast stream in z is kept if the second stream is not smaller (zlib-ng forced: replaced) */
+            const pf_zcfg ph = photo_cfg(&cc, backend, opts->deflate_level, opts->zlib_strategy, opts->search_depth,
+                                         opts->nice_length);
+            if (ph.level) {
+                size_t an = pf__zcompress(&ph, filt, rawn, tmp, zcap, A, &st);
+                if (!an) zn = 0;
+                else if (an < zn || zng) { memcpy(z, tmp, an); zn = an; }
+            }
         }
         pf__free(A, tmp);
     }
@@ -284,3 +261,5 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     *outp = pf__realloc_shrink(A, out, cap, *outn);
     return PF_OK;
 }
+
+int pf_backend_available(pf_backend b) { return b == PF_BACKEND_AUTO || pf__backend_available((int)b); }

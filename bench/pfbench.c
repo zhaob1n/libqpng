@@ -2,7 +2,10 @@
  *   pfbench decode raw|expand|imagers REPS file.png...
  *   pfbench encode PRESET[:FILTER[:LEVEL]] REPS file.png...   (source decoded to raw untimed; same format re-encoded)
  *   pfbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh | ultra
- *   pfbench inflate stock|pairs REPS orig:stream.zlib...
+ *   pfbench inflate stock|pairs|zng REPS orig:stream.zlib...   (zng: vendored zlib-ng, if built)
+ *   PRESET suffixes (encode): "#ld" / "#zng" force the backend; "@B:L:D:N:M:S" sets PF_POLICY (final graphics
+ *   stream: backend, level, depth, nice, minlen, strategy) in builds with -DPF_POLICY_OVERRIDE.
+ *   deflate LEVEL "zL" / "zLsS": zlib-ng level L (strategy S).
  * CSV: tool,op,param,file,rep,width,height,ns,bytes. Each timing covers setup + allocation + work; 1 warm-up rep.
  * DUMP_DIR=dir writes the last encoded PNG / compressed stream. */
 #define _POSIX_C_SOURCE 200809L
@@ -12,6 +15,9 @@
 #include <time.h>
 #include "pngfast.h"
 #include "pf_libdeflate.h"
+#ifdef PF_HAVE_ZLIBNG
+#  include <zlib-ng.h>
+#endif
 
 static long long now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000000000LL + t.tv_nsec; }
 static unsigned char *slurp(const char *p, size_t *n) {
@@ -57,10 +63,20 @@ int main(int argc, char **argv) {
             size_t n, sn; unsigned char *orig = slurp(o, &n), *st = slurp(s, &sn), *out = malloc(n + 1);
             for (int r = 0; r <= reps; r++) {
                 size_t got = 0; long long t0 = now_ns();
+                int rc;
+#ifdef PF_HAVE_ZLIBNG
+                if (!strcmp(param, "zng")) {
+                    zng_stream z; memset(&z, 0, sizeof z);
+                    zng_inflateInit(&z); z.next_in = st; z.avail_in = (uint32_t)sn; z.next_out = out; z.avail_out = (uint32_t)n;
+                    rc = zng_inflate(&z, Z_FINISH) != Z_STREAM_END; got = n - z.avail_out; zng_inflateEnd(&z);
+                } else
+#endif
+                {
                 struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
                 if (!strcmp(param, "pairs")) libdeflate_set_pair_literals(d, 1);
-                int rc = libdeflate_zlib_decompress(d, st, sn, out, n, &got);
+                rc = libdeflate_zlib_decompress(d, st, sn, out, n, &got);
                 libdeflate_free_decompressor(d);
+                }
                 long long dt = now_ns() - t0;
                 if (rc || got != n || memcmp(out, orig, n)) { fprintf(stderr, "FAIL inflate %s\n", s); return 1; }
                 if (r) printf("pngfast,inflate,%s,%s,%d,0,0,%lld,%zu\n", param, o, r, dt, n);
@@ -69,16 +85,29 @@ int main(int argc, char **argv) {
         }
         size_t n; unsigned char *buf = slurp(file, &n);
         if (!strcmp(op, "deflate")) {
-            int lv = deflate_level(param);
+            int lv = param[0] == 'z' ? 0 : deflate_level(param);
             size_t cap = n + n / 8 + 65536; unsigned char *out = malloc(cap), *chk = malloc(n + 1);
             for (int r = 0; r <= reps; r++) {
                 long long t0 = now_ns();
+                size_t m;
+#ifdef PF_HAVE_ZLIBNG
+                if (param[0] == 'z') {
+                    const char *ss = strchr(param, 's');
+                    unsigned long dl = (unsigned long)cap;
+                    zng_stream z; memset(&z, 0, sizeof z);
+                    zng_deflateInit2(&z, atoi(param + 1), Z_DEFLATED, 15, 9, ss ? atoi(ss + 1) : 0);
+                    z.next_in = buf; z.avail_in = (uint32_t)n; z.next_out = out; z.avail_out = (uint32_t)dl;
+                    m = zng_deflate(&z, Z_FINISH) == Z_STREAM_END ? dl - z.avail_out : 0; zng_deflateEnd(&z);
+                } else
+#endif
+                {
                 struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv == -3 ? LIBDEFLATE_PNG_ULTRA_LEVEL : lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL : lv);
                 if (lv == -1) libdeflate_set_png_min_match(c, 0);
                 if (lv == -2) libdeflate_set_png_params(c, 0, 9);
                 if (g_depth || g_nice) libdeflate_set_search_params(c, g_depth, g_nice);
-                size_t m = libdeflate_zlib_compress(c, buf, n, out, cap);
+                m = libdeflate_zlib_compress(c, buf, n, out, cap);
                 libdeflate_free_compressor(c);
+                }
                 long long dt = now_ns() - t0;
                 size_t got = 0; struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
                 if (!m || libdeflate_zlib_decompress(d, out, m, chk, n, &got) || got != n || memcmp(chk, buf, n)) { fprintf(stderr, "FAIL deflate %s\n", file); return 1; }
@@ -107,6 +136,10 @@ int main(int argc, char **argv) {
             if (s) { fprintf(stderr, "FAIL source decode %s\n", file); return 1; }
             pf_encode_options o; pf_encode_options_init(&o);
             o.preset = parse_preset(param);
+            if (strstr(param, "#zng")) o.backend = PF_BACKEND_ZLIBNG;
+            if (strstr(param, "#ld")) o.backend = PF_BACKEND_LIBDEFLATE;
+            const char *pol = strchr(param, '@');
+            if (pol) setenv("PF_POLICY", pol + 1, 1); else unsetenv("PF_POLICY");
             const char *c1 = strchr(param, ':');
             if (c1) { o.filter = atoi(c1 + 1); const char *c2 = strchr(c1 + 1, ':'); if (c2) { o.deflate_level = deflate_level(c2 + 1) < 0 ? 100 - deflate_level(c2 + 1) : deflate_level(c2 + 1);
                                                                                          o.search_depth = (int)g_depth; o.nice_length = (int)g_nice; } }
