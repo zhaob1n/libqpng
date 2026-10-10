@@ -1,6 +1,6 @@
 diff -ru a/lib/decompress_template.h b/lib/decompress_template.h
---- a/lib/decompress_template.h	2026-10-09 21:46:36.877127481 +0800
-+++ b/lib/decompress_template.h	2026-10-09 21:46:36.885127493 +0800
+--- a/lib/decompress_template.h	2026-10-10 10:28:03.523489356 +0800
++++ b/lib/decompress_template.h	2026-10-10 10:28:03.523489356 +0800
 @@ -44,13 +44,17 @@
  static ATTRIBUTES MAYBE_UNUSED enum libdeflate_result
  FUNCNAME(struct libdeflate_decompressor * restrict d,
@@ -107,8 +107,8 @@ diff -ru a/lib/decompress_template.h b/lib/decompress_template.h
  				return LIBDEFLATE_INSUFFICIENT_SPACE;
  			*out_next++ = length;
 diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
---- a/lib/deflate_compress.c	2026-10-09 21:46:36.889127499 +0800
-+++ b/lib/deflate_compress.c	2026-10-09 21:46:36.889127499 +0800
+--- a/lib/deflate_compress.c	2026-10-10 10:28:03.515489420 +0800
++++ b/lib/deflate_compress.c	2026-10-10 10:28:03.515489420 +0800
 @@ -466,6 +466,12 @@
  	/* Anything of this size or less we won't bother trying to compress. */
  	size_t max_passthrough_size;
@@ -136,7 +136,7 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
  	#if SUPPORT_NEAR_OPTIMAL_PARSING
  		/* Data for near-optimal parsing */
  		struct {
-@@ -2523,6 +2536,266 @@
+@@ -2523,6 +2536,686 @@
  }
  
  /*
@@ -243,6 +243,12 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +	return (u32)(sum / tot) + 1;
 +}
 +
++#ifndef PNGF_HASH_MIN_GAIN
++#  define PNGF_HASH_MIN_GAIN	8
++#endif
++#define PNGF_RUNONLY_MIN	3	/* run-only blocks after a failed probe ... */
++#define PNGF_RUNONLY_MAX	48	/* ... doubling per consecutive failure */
++
 +static void
 +deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 +			  const u8 *in, size_t in_nbytes,
@@ -257,9 +263,19 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +	const u32 minlen = c->png_min_hash_len;
 +	const u64 hmask = minlen >= 8 ? ~0ULL : (1ULL << (8 * minlen)) - 1;
 +	u32 litcost8 = 64;
++	/*
++	 * Adaptive hashing: when a block's hashed matches save (by the literal
++	 * cost estimate) less than 1/PNGF_HASH_MIN_GAIN of the cost of its
++	 * literals, and literals make up at least a quarter of the block
++	 * (typical for filtered photos, where only runs pay off), the next
++	 * runonly_len blocks are parsed in run-only mode (much faster, usually
++	 * smaller); then hashing is re-tried.  runonly_len doubles with every
++	 * consecutive failed probe.
++	 */
++	u32 runonly_blocks = 0, runonly_len = PNGF_RUNONLY_MIN;
 +
 +	memset(tab, 0, sizeof(c->p.pf.tab));
-+	if (minlen != 0 && minlen < 8) {
++	if (minlen != 0) {
 +		/* initial literal-cost estimate: order-0 entropy of a prefix */
 +		u32 h[256];
 +
@@ -275,6 +291,9 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +		const u8 *lit_start = in_next;
 +		const u8 *ip = in_next;
 +		const u8 *block_end;
++		const bool runonly = minlen == 0 || runonly_blocks != 0;
++		s64 hash_gain8 = 0;	/* est. bits (x8) saved by hashed matches */
++		size_t matched = 0;	/* bytes covered by runs + hashed matches */
 +
 +		deflate_begin_sequences(c, seq);
 +		while (ip < max_block_end && ip < in_limit &&
@@ -283,7 +302,7 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +			const u8 *ms;
 +			u32 len, off;
 +
-+			if (minlen == 0) {
++			if (runonly) {
 +				/*
 +				 * run-only mode: test the 4 start positions ip..ip+3
 +				 * for a run of 5 equal bytes at once (SWAR).
@@ -362,6 +381,8 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +					mp--;
 +					len++;
 +				}
++				hash_gain8 += (s64)len * litcost8 -
++					      8 * (c->png_short_base + bsr32(off));
 +				/* index the inside of the match (cheap: matches are rare) */
 +				{
 +					const u8 *p = ip + 1, *e = MIN(ms + len, in_limit);
@@ -371,6 +392,7 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +			}
 +			seq->litrunlen_and_length = (u32)(ms - lit_start);
 +			deflate_choose_match(c, len, off, false, &seq);
++			matched += len;
 +			lit_start = ip = ms + len;
 +		}
 +		if (ip >= in_limit)
@@ -379,11 +401,29 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +			block_end = MAX(lit_start, MIN(ip, max_block_end));
 +		seq->litrunlen_and_length = (u32)(block_end - lit_start);
 +
++		if (minlen != 0) {
++			if (runonly)
++				runonly_blocks--;
++			else {
++				const size_t bl = block_end - block_begin;
++				const size_t lits = bl - MIN(matched, bl);
++
++				/* literal-dominated (photo-like) and hashing does not pay */
++				if (lits * 4 >= bl &&
++				    hash_gain8 * PNGF_HASH_MIN_GAIN < (s64)lits * litcost8) {
++					runonly_blocks = runonly_len;
++					runonly_len = MIN(2 * runonly_len, PNGF_RUNONLY_MAX);
++				} else {
++					runonly_len = PNGF_RUNONLY_MIN;
++				}
++			}
++		}
++
 +		/* histogram the literals of this block */
 +		pngf_count_literals(c->freqs.litlen, block_begin, c->p.pf.sequences);
 +		deflate_finish_block(c, os, block_begin, block_end - block_begin,
 +				     c->p.pf.sequences, block_end == in_end);
-+		if (minlen != 0 && minlen < 8) {
++		if (minlen != 0) {
 +			/* literal cost under this block's actual code */
 +			u64 tot = 0, bits = 0;
 +			unsigned i;
@@ -400,15 +440,397 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +}
 +
 +/*
++ * png-ultra: single-pass run-only compressor (fdeflate "UltraFast" class, but
++ * with a per-block dynamic Huffman code).
++ *
++ * For each block (png_block_len bytes) the code is built from a *sampled*
++ * dry run (every 4th 512-byte chunk is parsed and counted; every symbol gets a
++ * floor count of 1 so unsampled data is always encodable), the header is
++ * written, and the block is then parsed and written in one pass: SWAR test of
++ * 4 run starts per 64-bit load, literals 4 at a time, runs as offset-1
++ * matches.  A block that would come out larger than stored is rewritten as
++ * stored block(s), so libdeflate's output bound still holds.
++ */
++#define PNGU_SAMPLE_CHUNK	512
++#define PNGU_SAMPLE_EVERY	8
++
++/* bitmask (bit 7 of byte i) of positions 0..3 in v that start 5 equal bytes */
++static forceinline u64
++pngu_run_starts(u64 v)
++{
++	const u64 lo7 = 0x7f7f7f7f7f7f7f7fULL;
++	const u64 z = v ^ (v >> 8);
++	u64 m = ~(((z & lo7) + lo7) | z | lo7);
++
++	m &= m >> 8;
++	m &= m >> 16;
++	return m & 0x80808080ULL;
++}
++
++/* length of the run of byte b starting at p (p[0] == b), capped at max */
++static forceinline u32
++pngu_run_len(const u8 *p, u8 b, u32 max, const u8 *in_end)
++{
++	const u64 bb = 0x0101010101010101ULL * b;
++	u32 len = 0;
++
++	while (len + 32 <= max && p + len + 32 <= in_end) {
++		const u64 x0 = get_unaligned_le64(p + len) ^ bb;
++		const u64 x1 = get_unaligned_le64(p + len + 8) ^ bb;
++		const u64 x2 = get_unaligned_le64(p + len + 16) ^ bb;
++		const u64 x3 = get_unaligned_le64(p + len + 24) ^ bb;
++		if (x0 | x1 | x2 | x3) {
++			if (x0)
++				return len + (bsf64(x0) >> 3);
++			if (x1)
++				return len + 8 + (bsf64(x1) >> 3);
++			if (x2)
++				return len + 16 + (bsf64(x2) >> 3);
++			return len + 24 + (bsf64(x3) >> 3);
++		}
++		len += 32;
++	}
++	while (len + 8 <= max && p + len + 8 <= in_end) {
++		u64 x = get_unaligned_le64(p + len) ^ bb;
++		if (x)
++			return len + (bsf64(x) >> 3);
++		len += 8;
++	}
++	while (len < max && p + len < in_end && p[len] == b)
++		len++;
++	return len;
++}
++
++/* split a run of 'len' offset-1 bytes into match lengths (all >= 3); calls f */
++#define PNGU_FOR_RUN(len, l, BODY)					\
++	while ((len) >= DEFLATE_MIN_MATCH_LEN) {			\
++		u32 l = MIN((len), DEFLATE_MAX_MATCH_LEN);		\
++		if ((len) - l != 0 && (len) - l < DEFLATE_MIN_MATCH_LEN) \
++			l = (len) - DEFLATE_MIN_MATCH_LEN;		\
++		BODY;							\
++		(len) -= l;						\
++	}
++
++/* dry run over [p, end): count literal / length symbols into freqs */
++static void
++pngu_count(struct deflate_freqs *f, const u8 *in, const u8 *p, const u8 *end,
++	   const u8 *in_end)
++{
++	while (p + 16 <= end) {
++		u64 m = pngu_run_starts(get_unaligned_le64(p));
++		u32 k, len;
++		u8 b;
++
++		if (!m) {
++			f->litlen[p[0]]++; f->litlen[p[1]]++;
++			f->litlen[p[2]]++; f->litlen[p[3]]++;
++			p += 4;
++			continue;
++		}
++		for (k = bsf64(m) >> 3; k; k--)
++			f->litlen[*p++]++;
++		b = *p;
++		if (p == in || p[-1] != b)
++			f->litlen[*p++]++;
++		len = pngu_run_len(p, b, end - p, in_end);
++		p += len;
++		PNGU_FOR_RUN(len, l,
++			f->litlen[DEFLATE_FIRST_LEN_SYM + deflate_length_slot[l]]++);
++		p -= len;	/* leftover (< 3) bytes become literals */
++	}
++	while (p < end)
++		f->litlen[*p++]++;
++}
++
++/* write [p, len) as stored block(s); os must have room */
++static void
++pngu_write_stored(struct deflate_output_bitstream *os, const u8 *p, size_t n,
++		  bool is_final)
++{
++	do {
++		size_t len = MIN(n, UINT16_MAX);
++		u8 bfinal = is_final && len == n;
++		u8 *out = os->next;
++
++		*out++ = (bfinal << os->bitcount) | os->bitbuf;
++		if (os->bitcount > 5)
++			*out++ = 0;
++		os->bitbuf = 0;
++		os->bitcount = 0;
++		put_unaligned_le16(len, out);
++		put_unaligned_le16(~len, out + 2);
++		memcpy(out + 4, p, len);
++		os->next = out + 4 + len;
++		p += len;
++		n -= len;
++	} while (n);
++}
++
++/* write the dynamic block header for c->codes (after precompute_huffman_header) */
++static void
++pngu_write_header(struct libdeflate_compressor *c,
++		  struct deflate_output_bitstream *os, bool is_final)
++{
++	bitbuf_t bitbuf = os->bitbuf;
++	unsigned bitcount = os->bitcount;
++	u8 *out_next = os->next;
++	u8 * const out_fast_end = os->end - MIN(WORDBYTES - 1, os->end - out_next);
++	unsigned i;
++
++	ADD_BITS(is_final, 1);
++	ADD_BITS(DEFLATE_BLOCKTYPE_DYNAMIC_HUFFMAN, 2);
++	ADD_BITS(c->o.precode.num_litlen_syms - 257, 5);
++	ADD_BITS(c->o.precode.num_offset_syms - 1, 5);
++	ADD_BITS(c->o.precode.num_explicit_lens - 4, 4);
++	FLUSH_BITS();
++	for (i = 0; i < c->o.precode.num_explicit_lens; i++) {
++		ADD_BITS(c->o.precode.lens[deflate_precode_lens_permutation[i]], 3);
++		FLUSH_BITS();
++	}
++	for (i = 0; i < c->o.precode.num_items; i++) {
++		unsigned item = c->o.precode.items[i];
++		unsigned sym = item & 0x1F;
++
++		ADD_BITS(c->o.precode.codewords[sym], c->o.precode.lens[sym]);
++		ADD_BITS(item >> 5, deflate_extra_precode_bits[sym]);
++		FLUSH_BITS();
++	}
++	os->bitbuf = bitbuf;
++	os->bitcount = bitcount;
++	os->next = out_next;
++}
++
++/*
++ * Parse + write one block with c->codes.  The output room is checked once per
++ * chunk of input against the chunk's worst case (14-bit literals; runs reaching
++ * past the chunk cost <= 40 bits per 258 bytes); chunks shrink as the room
++ * does.  Returns false if the block does not fit (the caller rewinds).
++ */
++#define PNGU_HEADER_MAX	600
++static bool
++pngu_write_block(struct libdeflate_compressor *c,
++		 struct deflate_output_bitstream *os, const u8 *in,
++		 const u8 *block_begin, const u8 *block_end, const u8 *in_end,
++		 bool is_final)
++{
++	bitbuf_t bitbuf;
++	unsigned bitcount;
++	u8 *out_next;
++	u8 *out_fast_end;
++	const u32 *cw = c->codes.codewords.litlen;
++	const u8 *cl = c->codes.lens.litlen;
++	const u8 *ip = block_begin;
++	u32 run_bits[DEFLATE_MAX_MATCH_LEN + 1];
++	u8 run_nbits[DEFLATE_MAX_MATCH_LEN + 1];
++	u32 len;
++
++	if ((size_t)(os->end - os->next) < PNGU_HEADER_MAX)
++		return false;
++	pngu_write_header(c, os, is_final);
++	/* offset-1 match = full length codeword + offset slot 0 (no extra bits) */
++	deflate_compute_full_len_codewords(c, &c->codes);
++	for (len = DEFLATE_MIN_MATCH_LEN; len <= DEFLATE_MAX_MATCH_LEN; len++) {
++		run_bits[len] = c->o.length.codewords[len] |
++			((u32)c->codes.codewords.offset[0] << c->o.length.lens[len]);
++		run_nbits[len] = c->o.length.lens[len] + c->codes.lens.offset[0];
++	}
++	bitbuf = os->bitbuf;
++	bitcount = os->bitcount;
++	out_next = os->next;
++	out_fast_end = os->end - (WORDBYTES - 1);
++#define PNGU_LIT(x)	do { const unsigned s_ = (x); ADD_BITS(cw[s_], cl[s_]); } while (0)
++	while (ip + 16 <= block_end) {
++	    const size_t room = os->end - out_next;
++	    const size_t over = (block_end - ip) / 48 + 64;
++	    const u8 *chunk_end;
++
++	    if (room < over + 128)
++		    return false;
++	    chunk_end = ip + MIN((size_t)4096, (room - over) / 2);
++	    chunk_end = MIN(chunk_end, block_end - 16);
++	    while (ip <= chunk_end) {
++		u64 m = pngu_run_starts(get_unaligned_le64(ip));
++		u32 k;
++		u8 b;
++
++		if (likely(!m)) {
++			/* 4 literals, then probe the next 4 starts too */
++			PNGU_LIT(ip[0]); PNGU_LIT(ip[1]);
++			PNGU_LIT(ip[2]); PNGU_LIT(ip[3]);
++			FLUSH_BITS();
++			ip += 4;
++			m = pngu_run_starts(get_unaligned_le64(ip));
++			if (likely(!m)) {
++				PNGU_LIT(ip[0]); PNGU_LIT(ip[1]);
++				PNGU_LIT(ip[2]); PNGU_LIT(ip[3]);
++				FLUSH_BITS();
++				ip += 4;
++				continue;
++			}
++		}
++		for (k = bsf64(m) >> 3; k; k--)
++			PNGU_LIT(*ip++);
++		b = *ip;
++		if (ip == in || ip[-1] != b)
++			PNGU_LIT(*ip++);
++		FLUSH_BITS();
++		len = pngu_run_len(ip, b, block_end - ip, in_end);
++		ip += len;
++		PNGU_FOR_RUN(len, l, {
++			ADD_BITS(run_bits[l], run_nbits[l]);
++			FLUSH_BITS();
++		});
++		ip -= len;	/* 0-2 leftover bytes are parsed again */
++	    }
++	}
++	if ((size_t)(os->end - out_next) < 64)
++		return false;
++	while (ip < block_end) {
++		PNGU_LIT(*ip++);
++		FLUSH_BITS();
++	}
++	PNGU_LIT(DEFLATE_END_OF_BLOCK);
++	FLUSH_BITS();
++#undef PNGU_LIT
++	os->bitbuf = bitbuf;
++	os->bitcount = bitcount;
++	os->next = out_next;
++	return true;
++}
++
++/*
++ * Compress [block_begin, +blen) as one png-ultra block (or stored blocks if
++ * that is not larger).  'hist' is the first byte the parser may look back at
++ * (block_begin, or block_begin - 1 if the previous byte is available).
++ * Returns false if the output does not fit.
++ */
++static bool
++pngu_block(struct libdeflate_compressor *c, struct deflate_output_bitstream *os,
++	   const u8 *hist, const u8 *block_begin, size_t blen, bool is_final)
++{
++	const u8 * const block_end = block_begin + blen;
++	const size_t stored_size = blen + 5 * DIV_ROUND_UP(blen, UINT16_MAX) +
++				   (os->bitcount > 5);
++	struct deflate_output_bitstream bs;
++	const u8 *p;
++	unsigned sym;
++
++	/* 1. code from a sampled dry run; every symbol stays encodable */
++	memset(&c->freqs, 0, sizeof(c->freqs));
++	for (p = block_begin; p < block_end;
++	     p += PNGU_SAMPLE_CHUNK * PNGU_SAMPLE_EVERY)
++		pngu_count(&c->freqs, hist, p,
++			   MIN(p + PNGU_SAMPLE_CHUNK, block_end), block_end);
++	/* (litlen symbols 286 and 287 are invalid in a stream) */
++	for (sym = 0; sym < DEFLATE_FIRST_LEN_SYM + 29; sym++)
++		c->freqs.litlen[sym] = c->freqs.litlen[sym] *
++				       PNGU_SAMPLE_EVERY + 1;
++	c->freqs.offset[0] = 1;
++	deflate_make_huffman_codes(&c->freqs, &c->codes);
++	deflate_precompute_huffman_header(c);
++
++	/* 2. keep it only if it fits and is not larger than stored
++	 *    (+1: pending partial byte), else rewind to stored */
++	bs = *os;
++	if (pngu_write_block(c, &bs, hist, block_begin, block_end, block_end,
++			     is_final) &&
++	    (size_t)(bs.next - os->next) + 1 <= stored_size) {
++		*os = bs;
++		return true;
++	}
++	if ((size_t)(os->end - os->next) < stored_size)
++		return false;
++	pngu_write_stored(os, block_begin, blen, is_final);
++	return true;
++}
++
++static void
++deflate_compress_png_ultra(struct libdeflate_compressor * restrict c,
++			   const u8 *in, size_t in_nbytes,
++			   struct deflate_output_bitstream *os)
++{
++	const u8 *in_next = in;
++	const u8 * const in_end = in + in_nbytes;
++	/* highly compressible blocks (ratio >= 4) grow 4x: fewer Huffman builds */
++	size_t target_len = c->png_block_len;
++
++	do {
++		size_t blen = MIN(target_len, (size_t)(in_end - in_next));
++		u8 * const out0 = os->next;
++
++		if ((size_t)(in_end - in_next) - blen < 4096)
++			blen = in_end - in_next;	/* no tiny final block */
++		if (!pngu_block(c, os, in, in_next, blen,
++				in_next + blen == in_end)) {
++			os->overflow = true;
++			return;
++		}
++		in_next += blen;
++		target_len = (size_t)(os->next - out0) * 4 < blen ?
++			MIN((size_t)c->png_block_len * 4, SOFT_MAX_BLOCK_LENGTH) :
++			c->png_block_len;
++	} while (in_next != in_end);
++}
++
++LIBDEFLATEAPI void
++libdeflate_set_search_params(struct libdeflate_compressor *c,
++			     unsigned max_search_depth, unsigned nice_match_length)
++{
++	if (c->compression_level < 2 || c->impl == deflate_compress_png_fast ||
++	    c->impl == deflate_compress_png_ultra)
++		return;
++	if (max_search_depth)
++		c->max_search_depth = MAX(1, MIN(max_search_depth, 65535));
++	if (nice_match_length)
++		c->nice_match_length = MAX(DEFLATE_MIN_MATCH_LEN,
++					   MIN(nice_match_length, DEFLATE_MAX_MATCH_LEN));
++}
++
++LIBDEFLATEAPI size_t
++libdeflate_png_ultra_compress_chunk(struct libdeflate_compressor *c,
++				    struct libdeflate_png_ultra_state *st,
++				    const void *in, size_t in_nbytes,
++				    int is_final, void *out,
++				    size_t out_nbytes_avail)
++{
++	struct deflate_output_bitstream os;
++	const u8 *p = in;
++
++	if (c->impl != deflate_compress_png_ultra || in_nbytes == 0)
++		return 0;
++	os.bitbuf = st->bitbuf;
++	os.bitcount = st->bitcount;
++	os.next = out;
++	os.end = os.next + out_nbytes_avail;
++	os.overflow = false;
++	if (!pngu_block(c, &os, st->has_prev ? p - 1 : p, p, in_nbytes,
++			is_final))
++		return 0;
++	if (is_final && os.bitcount) {
++		if (os.next >= os.end)
++			return 0;
++		*os.next++ = os.bitbuf;
++		os.bitbuf = 0;
++		os.bitcount = 0;
++	}
++	st->bitbuf = os.bitbuf;
++	st->bitcount = os.bitcount;
++	st->has_prev = 1;
++	return os.next - (u8 *)out;
++}
++
++/*
   * This is the "greedy" DEFLATE compressor. It always chooses the longest match.
   */
  static void
-@@ -3892,6 +4165,28 @@
+@@ -3892,6 +4585,32 @@
  	if (compression_level == -1)
  		compression_level = 6;
  
-+	if (compression_level == LIBDEFLATE_PNG_FAST_LEVEL) {
-+		size += sizeof(c->p.pf);
++	if (compression_level == LIBDEFLATE_PNG_FAST_LEVEL ||
++	    compression_level == LIBDEFLATE_PNG_ULTRA_LEVEL) {
++		if (compression_level == LIBDEFLATE_PNG_FAST_LEVEL)
++			size += sizeof(c->p.pf);
 +		c = libdeflate_aligned_malloc(options->malloc_func ?
 +					      options->malloc_func :
 +					      libdeflate_default_malloc_func,
@@ -421,8 +843,10 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +		c->max_passthrough_size = 32;
 +		c->max_search_depth = 1;
 +		c->nice_match_length = DEFLATE_MAX_MATCH_LEN;
-+		c->impl = deflate_compress_png_fast;
-+		c->png_block_len = 131072;
++		c->impl = compression_level == LIBDEFLATE_PNG_ULTRA_LEVEL ?
++			  deflate_compress_png_ultra : deflate_compress_png_fast;
++		c->png_block_len = compression_level == LIBDEFLATE_PNG_ULTRA_LEVEL ?
++				   65536 : 131072;
 +		c->png_skip_shift = 5;
 +		c->png_min_hash_len = 8;
 +		c->png_short_base = 16;
@@ -432,7 +856,7 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
  	if (compression_level < 0 || compression_level > 12)
  		return NULL;
  
-@@ -4133,3 +4428,22 @@
+@@ -4133,3 +4852,22 @@
  	 */
  	return (5 * max_blocks) + in_nbytes;
  }
@@ -456,8 +880,8 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +		c->png_min_hash_len = min_len;
 +}
 diff -ru a/lib/deflate_decompress.c b/lib/deflate_decompress.c
---- a/lib/deflate_decompress.c	2026-10-09 21:46:36.893127506 +0800
-+++ b/lib/deflate_decompress.c	2026-10-09 21:46:36.893127506 +0800
+--- a/lib/deflate_decompress.c	2026-10-10 10:28:03.519489388 +0800
++++ b/lib/deflate_decompress.c	2026-10-10 10:28:03.519489388 +0800
 @@ -278,7 +278,7 @@
   * be included for the intentional overrun in the match copy implementation.
   */
@@ -648,9 +1072,9 @@ diff -ru a/lib/deflate_decompress.c b/lib/deflate_decompress.c
 +	d->static_codes_loaded = false;
 +}
 diff -ru a/libdeflate.h b/libdeflate.h
---- a/libdeflate.h	2026-10-09 21:46:36.897127512 +0800
-+++ b/libdeflate.h	2026-10-09 21:46:36.897127512 +0800
-@@ -60,6 +60,22 @@
+--- a/libdeflate.h	2026-10-10 10:28:03.507489483 +0800
++++ b/libdeflate.h	2026-10-10 10:28:03.511489451 +0800
+@@ -60,6 +60,57 @@
  libdeflate_alloc_compressor(int compression_level);
  
  /*
@@ -660,6 +1084,9 @@ diff -ru a/libdeflate.h b/libdeflate.h
 + * Output is ordinary DEFLATE/zlib/gzip.
 + */
 +#define LIBDEFLATE_PNG_FAST_LEVEL 100
++/* png-ultra: single-pass run-only mode with sampled per-block Huffman codes
++ * (fastest; png_params block_len applies). */
++#define LIBDEFLATE_PNG_ULTRA_LEVEL 101
 +LIBDEFLATEAPI void
 +libdeflate_set_png_params(struct libdeflate_compressor *compressor,
 +			  unsigned block_len, unsigned skip_shift);
@@ -670,10 +1097,42 @@ diff -ru a/libdeflate.h b/libdeflate.h
 +libdeflate_set_png_min_match(struct libdeflate_compressor *compressor, unsigned min_len);
 +
 +/*
++ * Levels 2-12: override the match finder's search depth and nice match length
++ * (0 keeps the level's value; depth is clamped to 1..65535, nice to 3..258).
++ * For PNG graphics a deep search (zlib level 9 uses chains of 4096) is what
++ * makes the lazy parsers competitive.
++ */
++LIBDEFLATEAPI void
++libdeflate_set_search_params(struct libdeflate_compressor *compressor,
++			     unsigned max_search_depth, unsigned nice_match_length);
++
++/*
++ * png-ultra only: streaming use.  Only offset-1 runs are emitted, so the
++ * parser never needs more history than one byte, and the input can be fed in
++ * chunks (each chunk becomes one DEFLATE block, or stored blocks if smaller).
++ * Start with a zeroed state.  When state->has_prev is set (after the first
++ * chunk), in[-1] must be readable and hold the previous chunk's last byte.
++ * Returns the number of whole bytes written to 'out' (raw DEFLATE; leftover
++ * bits stay in the state until the final chunk), or 0 if 'out' is too small
++ * (each chunk needs at most in_nbytes + 5 * ceil(in_nbytes / 65535) + 2 bytes).
++ */
++struct libdeflate_png_ultra_state {
++	uint64_t bitbuf;
++	unsigned bitcount;
++	int has_prev;
++};
++LIBDEFLATEAPI size_t
++libdeflate_png_ultra_compress_chunk(struct libdeflate_compressor *compressor,
++				    struct libdeflate_png_ultra_state *state,
++				    const void *in, size_t in_nbytes,
++				    int is_final, void *out,
++				    size_t out_nbytes_avail);
++
++/*
   * Like libdeflate_alloc_compressor(), but adds the 'options' argument.
   */
  LIBDEFLATEAPI struct libdeflate_compressor *
-@@ -251,6 +267,19 @@
+@@ -251,6 +302,19 @@
   * then the actual compressed size of the DEFLATE stream (aligned to the next
   * byte boundary) is written to *actual_in_nbytes_ret.
   */

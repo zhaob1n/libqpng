@@ -29,7 +29,26 @@ libdeflate's own block machinery (per-block optimal dynamic Huffman codes, store
   64-bit load. Used by pngfast's FASTEST preset.
 
 API: `libdeflate_set_png_params(c, block_len, skip_shift)`, `libdeflate_set_png_min_match(c, min_len)`.
-`libdeflate_alloc_compressor(100)` is the only way to select the mode; levels 0..12 are unchanged.
+`libdeflate_alloc_compressor(100)` is the only way to select the mode; levels 0..12 use upstream parsers.
+
+## Compressor: "png-ultra" mode (`LIBDEFLATE_PNG_ULTRA_LEVEL` = 101)
+
+Single pass, run-only parse (offset-1 runs found with 4x64-bit SWAR compares, everything else literal), no
+per-block optimal-code pass: each block's litlen/offset codes are built from a sampled histogram (a strided
+subset of the block plus the run lengths found), so the block is read once for counting and once for coding.
+Blocks grow adaptively (64 KiB, up to 256 KiB while data compresses well). Litlen symbols 286/287 are never
+given codes (stock zlib rejects them). Output room is checked in chunks, so no scratch buffer is needed.
+Streaming API for row-chunked input (pngfast filters an L2-sized slice of rows at a time and never
+materialises the filtered image):
+`libdeflate_png_ultra_compress_chunk(c, hist, in, len, is_final, out, avail)` - `hist` = preceding bytes
+(window), returns bytes written. Used by pngfast's FASTEST and FAST presets.
+
+## Compressor: match finder parameters for levels 2-12
+
+`libdeflate_set_search_params(c, max_search_depth, nice_match_length)` overrides the per-level defaults
+(0 = keep). pngfast uses it for content-tuned DEFAULT/BEST levels (e.g. L8 depth 48 nice 258 for alpha
+graphics; L10 depth 48 nice 96 for alpha / 16-bit graphics in BEST - bounded near-optimal: nice 258 is ~2x
+slower on long-run data because every position offers 258-byte matches whose lengths are all costed).
 
 ## Decompressor
 
@@ -45,5 +64,5 @@ Both features are opt-in; with them off the decompressor behaves (and performs) 
 
 ## Not changed
 
-Checksums (`adler32`, `crc32` incl. the VPCLMULQDQ/AVX-512 paths), CPU feature detection and levels 0-12 are
-upstream code. pngfast uses `libdeflate_crc32` / `libdeflate_adler32` for chunk CRCs and zlib checksums.
+Checksums (`adler32`, `crc32` incl. the VPCLMULQDQ/AVX-512 paths), CPU feature detection and the level 0-12
+parsers are upstream code. pngfast uses `libdeflate_crc32` / `libdeflate_adler32` for chunk CRCs and zlib checksums.
