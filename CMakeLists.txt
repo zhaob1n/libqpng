@@ -74,7 +74,7 @@ endif()
 #    linked next to stock zlib / zlib-ng / libdeflate. Tests and tools that need the internals link
 #    pngfast_internal (same objects, nothing localized).
 option(PNGFAST_HIDE_SYMBOLS "Localize all non-API symbols in libpngfast (needs ld -r + objcopy, ELF)" ON)
-set(PF_SOURCES src/common.c src/decode.c src/unfilter.c src/expand.c src/encode.c src/filter_enc.c src/deflate_backend.c src/metadata.c)
+set(PF_SOURCES src/common.c src/decode.c src/unfilter.c src/expand.c src/encode.c src/filter_enc.c src/deflate_backend.c src/metadata.c src/stream.c)
 add_library(pngfast_obj OBJECT ${PF_SOURCES})
 target_include_directories(pngfast_obj PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                                        PRIVATE src ${LD})

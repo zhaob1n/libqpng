@@ -35,4 +35,23 @@ size_t pf__zcompress(const pf_zcfg *c, const uint8_t *src, size_t n, uint8_t *ds
  * into an L2-sized buffer and compressed chunk by chunk. */
 size_t pf__zcompress_ultra_rows(const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int filter,
                                 int hybrid, uint8_t *dst, size_t cap, const pf_allocator *A, pf_status *st);
+
+/* ---- streaming (pf_encoder / pf_decoder) ---- */
+/* compressed-output sink; returns PF_OK or an error that aborts the stream */
+typedef pf_status (*pf_zsink)(void *ctx, const uint8_t *data, size_t n);
+typedef struct pf_zstream pf_zstream;
+/* streamable configs: libdeflate PF_DEFLATE_PNGULTRA, zlib-ng levels 1-9 (else NULL with *st = UNSUPPORTED) */
+pf_zstream *pf__zstream_new(const pf_zcfg *c, const pf_allocator *A, pf_zsink sink, void *ctx, pf_status *st);
+/* compress the next n bytes (png-ultra: n <= PF_ZSTREAM_MAX_CHUNK and in[-1] readable); final ends the stream */
+pf_status pf__zstream_write(pf_zstream *z, const uint8_t *in, size_t n, int final);
+void pf__zstream_free(pf_zstream *z);
+#define PF_ZSTREAM_MAX_CHUNK (262144 + 4096)
+
+/* raw-deflate streaming inflate (zlib-ng only; NULL without it) */
+typedef struct pf_zistream pf_zistream;
+pf_zistream *pf__zistream_new(const pf_allocator *A);
+/* inflate from in[0..n) into out[0..cap); *used / *made report progress; returns 1 at end of the deflate stream,
+ * 0 if more input / output is needed, -1 on corrupt data */
+int pf__zistream_run(pf_zistream *z, const uint8_t *in, size_t n, size_t *used, uint8_t *out, size_t cap, size_t *made);
+void pf__zistream_free(pf_zistream *z);
 #endif

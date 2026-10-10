@@ -47,7 +47,10 @@ typedef enum {
     PF_ERR_NOMEM = -10,       /* allocation failed */
     PF_ERR_LIMITS = -11,      /* image exceeds the configured limits */
     PF_ERR_UNSUPPORTED = -12, /* valid PNG feature not supported */
-    PF_ERR_ENCODE = -13       /* internal encoder failure (should not happen) */
+    PF_ERR_ENCODE = -13,      /* internal encoder failure (should not happen) */
+    PF_ERR_ABORTED = -14,     /* a user callback (rows, read, write) returned nonzero */
+    PF_ERR_STATE = -15,       /* streaming call in the wrong state (e.g. finish before IEND, too many rows) */
+    PF_MORE_DATA = 1          /* streaming decode: not an error, more input is needed */
 } pf_status;
 
 PF_API const char *pf_status_string(pf_status status);
@@ -259,6 +262,52 @@ PF_API void pf_encode_options_init(pf_encode_options *opts);
 PF_API pf_status pf_encode(const void *pixels, uint32_t width, uint32_t height, size_t stride, pf_color color,
                            int bit_depth, const pf_encode_options *opts, uint8_t **out, size_t *out_size);
 PF_API void pf_buffer_free(void *buf, const pf_allocator *allocator);
+
+/* ---- streaming ------------------------------------------------------------------------------------------------
+ * Incremental decode: create a pf_decoder, push bytes as they arrive (any split), query the header as soon as IHDR
+ * is in, finish after IEND.
+ *  - row mode (row_cb != NULL): every output row (pf_decode_options.output layout, `row_bytes` bytes) is handed to
+ *    row_cb in order. Non-interlaced images with the zlib-ng backend built in are decoded truly incrementally with
+ *    O(row) memory (zlib-ng streaming inflate: ~35% slower inflate than the one-shot libdeflate path). Interlaced
+ *    images, and every image in libdeflate-only builds, are buffered (compressed bytes) and decoded with the
+ *    one-shot path at IEND, then emitted row by row (memory: file + image).
+ *  - image mode (row_cb == NULL): compressed data is buffered and pf_decoder_finish() returns the whole image via
+ *    the fast one-shot path (same speed as pf_decode plus one copy of the input).
+ * Ancillary chunks are not interpreted (use pf_read_metadata on the header bytes if needed); APNG data is ignored
+ * as in pf_decode. CRCs are checked incrementally (verify_crc). */
+typedef struct pf_decoder pf_decoder;
+/* return nonzero to abort (the push / finish then fails with PF_ERR_ABORTED) */
+typedef int (*pf_row_fn)(void *user, uint32_t y, const uint8_t *row, size_t row_bytes);
+PF_API pf_status pf_decoder_new(const pf_decode_options *opts, pf_row_fn row_cb, void *user, pf_decoder **dec);
+/* returns PF_OK when the stream is complete (IEND seen), PF_MORE_DATA when more input is expected, or an error
+ * (sticky: later calls return it again) */
+PF_API pf_status pf_decoder_push(pf_decoder *dec, const void *data, size_t size);
+/* PF_OK once IHDR has been parsed (info filled), PF_MORE_DATA before */
+PF_API pf_status pf_decoder_info(const pf_decoder *dec, pf_info *info);
+/* after IEND: image mode returns the image in *img; row mode emits any rows still pending (img may be NULL) */
+PF_API pf_status pf_decoder_finish(pf_decoder *dec, pf_image *img);
+PF_API void pf_decoder_free(pf_decoder *dec);
+/* convenience: pull input from read (returns bytes read, 0 = end of input, (size_t)-1 = error -> PF_ERR_ABORTED)
+ * and decode with pf_decoder_* (row_cb / img as above) */
+typedef size_t (*pf_read_fn)(void *user, uint8_t *buf, size_t size);
+PF_API pf_status pf_decode_stream(pf_read_fn read, void *read_user, const pf_decode_options *opts, pf_row_fn row_cb,
+                                  void *row_user, pf_image *img);
+
+/* Incremental encode with bounded memory: rows are pushed in order (any batch size) and the PNG is written through
+ * write() as it is produced (IDAT chunks of <= 256 KiB). Filtering per preset (FASTEST: Up, others: adaptive; no
+ * whole-image probing), deflate: FASTEST/FAST png-ultra (as one-shot), DEFAULT/BEST zlib-ng level 6 / 9 when built
+ * in, otherwise png-ultra with the adaptive filter. Explicit filter / deflate_level / backend work as in
+ * pf_encode where streaming is possible (libdeflate levels 1-12 and png-fast are not streamable -> PF_ERR_UNSUPPORTED).
+ * opts->metadata is written. Memory: a few rows + compressor state (zlib-ng ~300 KiB). */
+typedef struct pf_encoder pf_encoder;
+typedef int (*pf_write_fn)(void *user, const uint8_t *data, size_t size);   /* nonzero = abort */
+PF_API pf_status pf_encoder_new(uint32_t width, uint32_t height, pf_color color, int bit_depth,
+                                const pf_encode_options *opts, pf_write_fn write, void *write_user, pf_encoder **enc);
+/* rows in pf_encode's layout; stride 0 = packed. Pushing more than `height` rows -> PF_ERR_STATE. */
+PF_API pf_status pf_encoder_push_rows(pf_encoder *enc, const void *rows, size_t stride, uint32_t nrows);
+/* all rows must have been pushed; writes the remaining data and IEND */
+PF_API pf_status pf_encoder_finish(pf_encoder *enc);
+PF_API void pf_encoder_free(pf_encoder *enc);
 
 #ifdef __cplusplus
 }

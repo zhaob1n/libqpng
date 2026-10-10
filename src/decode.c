@@ -84,7 +84,7 @@ void pf_decode_options_init(pf_decode_options *o) {
 static const uint8_t PNG_SIG[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
 /* IHDR validation; returns file channels or a negative status */
-static int check_ihdr(const uint8_t *ih, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace) {
+int pf__check_ihdr(const uint8_t *ih, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace) {
     *W = be32(ih); *H = be32(ih + 4); *depth = ih[8]; *color = ih[9]; *interlace = ih[12];
     if (!*W || !*H || *W > 0x7FFFFFFFu || *H > 0x7FFFFFFFu || ih[10] || ih[11] || *interlace > 1) return PF_ERR_HEADER;
     switch (*color) {
@@ -103,7 +103,7 @@ pf_status pf_read_info(const void *png, size_t n, pf_info *info) {
     memset(info, 0, sizeof *info);
     if (n < 8 + 25 || memcmp(buf, PNG_SIG, 8)) return PF_ERR_SIGNATURE;
     if (be32(buf + 8) != 13 || memcmp(buf + 12, "IHDR", 4)) return PF_ERR_HEADER;
-    uint32_t W, H; int depth, color, il, ich = check_ihdr(buf + 16, &W, &H, &depth, &color, &il);
+    uint32_t W, H; int depth, color, il, ich = pf__check_ihdr(buf + 16, &W, &H, &depth, &color, &il);
     if (ich < 0) return (pf_status)ich;
     info->width = W; info->height = H; info->bit_depth = (uint8_t)depth; info->color_type = (uint8_t)color;
     info->interlaced = (uint8_t)il; info->channels = (uint8_t)ich;
@@ -135,7 +135,7 @@ pf_status pf_decode(const void *png, size_t n, const pf_decode_options *opts, pf
     if (n < 8 + 25 || memcmp(buf, PNG_SIG, 8)) return PF_ERR_SIGNATURE;
     if (be32(buf + 8) != 13 || memcmp(buf + 12, "IHDR", 4)) return PF_ERR_HEADER;
     uint32_t W, H; int depth, color, interlace;
-    const int ich = check_ihdr(buf + 16, &W, &H, &depth, &color, &interlace);
+    const int ich = pf__check_ihdr(buf + 16, &W, &H, &depth, &color, &interlace);
     if (ich < 0) return (pf_status)ich;
     if (opts->verify_crc && libdeflate_crc32(0, buf + 12, 17) != be32(buf + 29)) return PF_ERR_CRC;
     if (W > maxw || H > maxh) return PF_ERR_LIMITS;

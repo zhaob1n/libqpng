@@ -139,3 +139,123 @@ done:
     libdeflate_free_compressor(c);
     return zn;
 }
+
+/* ---- streaming compressor ---- */
+struct pf_zstream {
+    pf_zcfg cfg;
+    const pf_allocator *A;
+    pf_zsink sink; void *ctx;
+    int started;
+    uint32_t adler;                         /* png-ultra: zlib trailer computed here */
+    struct libdeflate_compressor *ld;
+    struct libdeflate_png_ultra_state us;
+    uint8_t *obuf; size_t ocap;
+#ifdef PF_HAVE_ZLIBNG
+    zng_stream zs; int zs_init;
+#endif
+};
+
+pf_zstream *pf__zstream_new(const pf_zcfg *c, const pf_allocator *A, pf_zsink sink, void *ctx, pf_status *st) {
+    const int ultra = c->backend == PF_BACKEND_LIBDEFLATE && c->level == PF_DEFLATE_PNGULTRA;
+    if (!pf__zcfg_valid(c) || !(ultra || c->backend == PF_BACKEND_ZLIBNG)) { *st = PF_ERR_UNSUPPORTED; return NULL; }
+    pf_zstream *z = pf__alloc(A, sizeof *z);
+    if (!z) { *st = PF_ERR_NOMEM; return NULL; }
+    memset(z, 0, sizeof *z);
+    z->cfg = *c; z->A = A; z->sink = sink; z->ctx = ctx; z->adler = 1;
+    z->ocap = ultra ? libdeflate_zlib_compress_bound(NULL, PF_ZSTREAM_MAX_CHUNK) + 64 : 65536;
+    z->obuf = pf__alloc(A, z->ocap);
+    if (!z->obuf) goto nomem;
+    if (ultra) {
+        z->ld = libdeflate_alloc_compressor(LIBDEFLATE_PNG_ULTRA_LEVEL);
+        if (!z->ld) goto nomem;
+    }
+#ifdef PF_HAVE_ZLIBNG
+    else {
+        z->zs.zalloc = zng_alloc_cb; z->zs.zfree = zng_free_cb; z->zs.opaque = (void *)A;
+        if (zng_deflateInit2(&z->zs, c->level, Z_DEFLATED, 15, 9, c->strategy) != Z_OK) goto nomem;
+        z->zs_init = 1;
+    }
+#endif
+    return z;
+nomem:
+    pf__zstream_free(z);
+    *st = PF_ERR_NOMEM;
+    return NULL;
+}
+
+pf_status pf__zstream_write(pf_zstream *z, const uint8_t *in, size_t n, int final) {
+    pf_status st = PF_OK;
+    if (z->ld) {
+        if (n > PF_ZSTREAM_MAX_CHUNK) return PF_ERR_ENCODE;
+        size_t o = 0;
+        if (!z->started) { z->obuf[0] = 0x78; z->obuf[1] = 0x01; o = 2; z->started = 1; }
+        z->adler = libdeflate_adler32(z->adler, in, n);
+        size_t k = libdeflate_png_ultra_compress_chunk(z->ld, &z->us, in, n, final, z->obuf + o, z->ocap - o - 4);
+        if (!k && (n || final)) return PF_ERR_ENCODE;
+        o += k;
+        if (final) { wbe32(z->obuf + o, z->adler); o += 4; }
+        return o ? z->sink(z->ctx, z->obuf, o) : PF_OK;
+    }
+#ifdef PF_HAVE_ZLIBNG
+    size_t done = 0;
+    for (;;) {
+        const size_t ci = n - done < 0x40000000u ? n - done : 0x40000000u;
+        z->zs.next_in = in + done; z->zs.avail_in = (uint32_t)ci;
+        z->zs.next_out = z->obuf; z->zs.avail_out = (uint32_t)z->ocap;
+        const int last = final && done + ci == n;
+        int r = zng_deflate(&z->zs, last ? Z_FINISH : Z_NO_FLUSH);
+        if (r != Z_OK && r != Z_STREAM_END && r != Z_BUF_ERROR) return PF_ERR_ENCODE;
+        done += ci - z->zs.avail_in;
+        const size_t made = z->ocap - z->zs.avail_out;
+        if (made && (st = z->sink(z->ctx, z->obuf, made)) != PF_OK) return st;
+        if (r == Z_STREAM_END) return PF_OK;
+        if (done == n && !last && z->zs.avail_out) return PF_OK;   /* input consumed, nothing pending */
+    }
+#else
+    (void)in; (void)n; (void)final; (void)st;
+    return PF_ERR_UNSUPPORTED;
+#endif
+}
+
+void pf__zstream_free(pf_zstream *z) {
+    if (!z) return;
+    if (z->ld) libdeflate_free_compressor(z->ld);
+#ifdef PF_HAVE_ZLIBNG
+    if (z->zs_init) zng_deflateEnd(&z->zs);
+#endif
+    pf__free(z->A, z->obuf);
+    pf__free(z->A, z);
+}
+
+/* ---- streaming inflate (zlib-ng) ---- */
+#ifdef PF_HAVE_ZLIBNG
+struct pf_zistream { zng_stream zs; const pf_allocator *A; };
+pf_zistream *pf__zistream_new(const pf_allocator *A) {
+    pf_zistream *z = pf__alloc(A, sizeof *z);
+    if (!z) return NULL;
+    memset(z, 0, sizeof *z);
+    z->A = A; z->zs.zalloc = zng_alloc_cb; z->zs.zfree = zng_free_cb; z->zs.opaque = (void *)A;
+    if (zng_inflateInit2(&z->zs, -15) != Z_OK) { pf__free(A, z); return NULL; }   /* raw: zlib header/trailer are ours */
+    return z;
+}
+int pf__zistream_run(pf_zistream *z, const uint8_t *in, size_t n, size_t *used, uint8_t *out, size_t cap, size_t *made) {
+    const uint32_t ci = n < 0x40000000u ? (uint32_t)n : 0x40000000u, co = cap < 0x40000000u ? (uint32_t)cap : 0x40000000u;
+    z->zs.next_in = in; z->zs.avail_in = ci; z->zs.next_out = out; z->zs.avail_out = co;
+    int r = zng_inflate(&z->zs, Z_NO_FLUSH);
+    *used = ci - z->zs.avail_in; *made = co - z->zs.avail_out;
+    if (r == Z_STREAM_END) return 1;
+    if (r == Z_OK || r == Z_BUF_ERROR) return 0;
+    return -1;
+}
+void pf__zistream_free(pf_zistream *z) {
+    if (!z) return;
+    zng_inflateEnd(&z->zs);
+    pf__free(z->A, z);
+}
+#else
+pf_zistream *pf__zistream_new(const pf_allocator *A) { (void)A; return NULL; }
+int pf__zistream_run(pf_zistream *z, const uint8_t *in, size_t n, size_t *used, uint8_t *out, size_t cap, size_t *made) {
+    (void)z; (void)in; (void)n; (void)out; (void)cap; *used = *made = 0; return -1;
+}
+void pf__zistream_free(pf_zistream *z) { (void)z; }
+#endif

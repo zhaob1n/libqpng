@@ -201,3 +201,16 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   validation errors, PngSuite values, all 162 PngSuite files re-encoded with their metadata. fuzz_decode parses,
   rewrites and re-parses metadata. (Parser uses `goto bad`: a `continue` in a do{}while(0) macro was the bug
   ASan found in the lost first version.) Version 1.2.0.
+* Item 4a (streaming) first version DONE: src/stream.c + pf_zstream / pf_zistream in deflate_backend.
+  - pf_decoder (push, any split; header via pf_decoder_info as soon as IHDR is in; CRC incremental; sticky errors).
+    Row mode + non-interlaced + zlib-ng: true streaming (raw zlib-ng inflate into one row, unfilter vs previous row,
+    transform, callback; O(row) memory). Image mode / interlaced / libdeflate-only builds: input buffered, one-shot
+    pf_decode at finish (rows emitted after). pf_decode_stream(read_fn) convenience.
+  - pf_encoder (push rows, write_fn sink, IDAT <= 256 KiB): FASTEST/FAST png-ultra chunks (hybrid Up switch as
+    one-shot FAST), DEFAULT/BEST zlib-ng 6/9 (png-ultra adaptive without zlib-ng); metadata written; libdeflate
+    levels / png-fast -> PF_ERR_UNSUPPORTED (not streamable).
+  - new status codes PF_ERR_ABORTED, PF_ERR_STATE, PF_MORE_DATA (= 1).
+  - tests/test_stream.c (ctest stream): 217 files x 3 output modes: image mode / row mode / pull reader with random
+    push sizes == pf_decode; stream encode 4 presets x 3 backends with random row batches round trip; truncation,
+    header-first, sticky CRC error, row/write callback abort, state errors. Bug found: libdeflate_crc32(crc, NULL, 0)
+    returns 0 (IEND CRC) -> guarded.

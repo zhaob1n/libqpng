@@ -33,6 +33,9 @@ static inline int paeth_s(int a, int b, int c) {
     return (th <= lo) ? hi : t0;
 }
 
+/* ---- decode.c: IHDR validation (13 payload bytes); returns file channels or a negative pf_status ---- */
+int pf__check_ihdr(const uint8_t *ih, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace);
+
 /* ---- CPU features (cached) ---- */
 int pf__have_avx2(void);
 
