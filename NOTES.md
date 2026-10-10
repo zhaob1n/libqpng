@@ -163,3 +163,17 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
 * Tests: roundtrip adds 4 presets x LIBDEFLATE, 4 x ZLIBNG, 5 explicit zng level/strategy combos (stock zlib
   inflates each); test_api covers backend validation + allocator hooks through zlib-ng; fuzz_roundtrip picks a
   backend. gcc/clang -Wall -Wextra clean (zlib-ng itself built with -w).
+* 21:14-21:45 final encode matrix (bench/results/phase4/encode_matrix.md, load 0.7-1.5, 3 rounds x 2 reps):
+  AUTO beats the png counterpart (miniz and zlib-rs) on speed and size in every group except BEST ga8 vs zlib-rs
+  High (31 @ 20.55 vs 15 @ 20.69, -0.7% size) and FASTEST graphics 16-bit speed tie (1905 vs 1912, +42% ratio).
+  Forced zlib-ng on photos is 5-10x slower and larger (photo rgb8 DEFAULT 48 vs 489 MB/s) -> libdeflate kept for
+  photos and FASTEST/FAST (zng L1/L2 graphics: better ratio, 1.5-3x slower than png-ultra).
+* Decode no-regression (decode.md): ALL pf-imagers 359 vs imagers 252 (phase 3: 389 / 261, load higher now).
+  Inflate: zlib-ng 363 MB/s vs patched libdeflate pairs 570 -> decode stays on libdeflate.
+* 21:50-22:00 ctest ON 7/7, OFF 6/6, sanitize.sh (ASan+UBSan with zlib-ng, portable no-zlib-ng, mutation +
+  libFuzzer 30 s each): OK.
+* TODO: static libpngfast exports zlib-ng's internal unprefixed symbols (deflate_medium, crc32_*, adler32_c ...)
+  and zng_*: linking another static zlib-ng into the same program would clash -> prefix via objcopy
+  --prefix-symbols / a partial link, or a version script for the shared build. ga8 BEST: chain/lazy tuning
+  per alpha content. Probe filter choice was tuned for libdeflate; re-tune for zlib-ng L6 (None allowance).
+  zlib-ng memLevel 8 vs 9 not measured separately.

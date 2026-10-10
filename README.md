@@ -154,86 +154,109 @@ python3 bench/run.py deflate --rounds 3 --reps 5      # raw zlib streams vs fdef
 corpus: kodim01/03/05, cathedral, screenshot, graphics in 20 color type / depth variants each, plus Adam7
 copies). Results of the last run are in `bench/results/`.
 
-## Results (2026-10-09, CST, Intel AVX-512 box shared with other agents, load 0.2-1.7, core 3, medians)
+## Results (2026-10-10, CST, Intel AVX-512 box shared with other agents, load 0.7-1.5, core 3, medians)
 
-pngfast 1.0 (this repo, gcc 12 -O2) vs png crate git b2f10c6 / image-rs 0.25.9 / fdeflate (Rust 1.x release).
+pngfast 1.1 (gcc 12 -O2, zlib-ng backend built in) vs png crate git b2f10c6 / image-rs 0.25.9 / fdeflate.
 `png-*` = png crate with flate2's default miniz_oxide backend, `pngz-*` = same with the `zlib-rs` feature.
-Cells: MB/s of decoded image bytes @ compression ratio. Raw CSVs: `bench/results/final/`.
+Cells: MB/s of decoded image bytes @ compression ratio. Raw CSVs / tables: `bench/results/phase4/` (encode_matrix,
+decode, inflate; backend sweeps). Phase 3 (libdeflate only) results: `bench/results/phase3_*.md`.
 
 ### Encode, fast presets (png Fastest = Up + fdeflate UltraFast, png Fast = Adaptive + UltraFast)
 
 | group | png-fastest | pf-fastest | png-fast | pf-fast |
 |---|---|---|---|---|
-| graphics/16bit | 1787 @ 8.309 | 1066 @ 12.509 | 998 @ 10.968 | 790 @ 28.546 |
-| graphics/g8 | 2157 @ 9.729 | 1844 @ 13.571 | 992 @ 11.795 | 624 @ 29.096 |
-| graphics/ga8 | 879 @ 5.499 | 826 @ 8.331 | 613 @ 6.810 | 494 @ 15.219 |
-| graphics/p8 | 1835 @ 9.648 | 1621 @ 13.476 | 1063 @ 11.574 | 589 @ 23.974 |
-| graphics/rgb8 | 2113 @ 11.001 | 2158 @ 14.669 | 1346 @ 13.721 | 935 @ 31.236 |
-| graphics/rgba8 | 1021 @ 5.858 | 708 @ 8.598 | 689 @ 7.741 | 592 @ 17.634 |
-| graphics/sub8 | 1686 @ 7.702 | 1304 @ 10.478 | 781 @ 8.790 | 479 @ 25.862 |
-| photo/16bit | 327 @ 1.312 | 408 @ 1.444 | 265 @ 1.348 | 227 @ 1.535 |
-| photo/g8 | 473 @ 1.726 | 589 @ 1.822 | 379 @ 1.861 | 447 @ 1.966 |
-| photo/ga8 | 466 @ 2.341 | 479 @ 2.569 | 407 @ 2.483 | 342 @ 2.724 |
-| photo/p8 | 385 @ 1.750 | 341 @ 1.993 | 299 @ 1.755 | 218 @ 1.976 |
-| photo/rgb8 | 457 @ 1.675 | 574 @ 1.766 | 363 @ 1.796 | 446 @ 1.888 |
-| photo/rgba8 | 458 @ 1.936 | 521 @ 2.010 | 327 @ 2.063 | 443 @ 2.142 |
-| photo/sub8 | 338 @ 1.509 | 375 @ 2.170 | 278 @ 1.538 | 227 @ 2.148 |
-| ALL | 418 @ 1.703 | 488 @ 1.890 | 330 @ 1.778 | 297 @ 2.031 |
+| graphics/16bit | 1912 @ 8.309 | 1905 @ 11.835 | 1181 @ 10.968 | 1887 @ 11.903 |
+| graphics/g8 | 2146 @ 9.729 | 2938 @ 13.007 | 1329 @ 11.795 | 2586 @ 13.004 |
+| graphics/ga8 | 895 @ 5.499 | 1278 @ 8.060 | 672 @ 6.810 | 1241 @ 8.173 |
+| graphics/p8 | 1896 @ 9.648 | 2324 @ 12.772 | 1106 @ 11.574 | 2117 @ 12.772 |
+| graphics/rgb8 | 2384 @ 11.001 | 3744 @ 14.087 | 1454 @ 13.721 | 3395 @ 14.134 |
+| graphics/rgba8 | 1096 @ 5.858 | 1149 @ 8.390 | 835 @ 7.741 | 1094 @ 8.468 |
+| graphics/sub8 | 1664 @ 7.702 | 1754 @ 10.287 | 974 @ 8.790 | 1275 @ 10.418 |
+| photo/16bit | 362 @ 1.312 | 547 @ 1.435 | 299 @ 1.348 | 563 @ 1.470 |
+| photo/g8 | 531 @ 1.726 | 836 @ 1.808 | 422 @ 1.861 | 664 @ 1.951 |
+| photo/ga8 | 554 @ 2.341 | 605 @ 2.522 | 443 @ 2.483 | 581 @ 2.669 |
+| photo/p8 | 425 @ 1.750 | 468 @ 1.978 | 344 @ 1.755 | 532 @ 1.968 |
+| photo/rgb8 | 486 @ 1.675 | 773 @ 1.755 | 397 @ 1.796 | 670 @ 1.874 |
+| photo/rgba8 | 497 @ 1.936 | 754 @ 1.985 | 420 @ 2.063 | 633 @ 2.113 |
+| photo/sub8 | 385 @ 1.509 | 524 @ 2.158 | 308 @ 1.538 | 512 @ 2.158 |
+| ALL | 461 @ 1.703 | 670 @ 1.875 | 375 @ 1.778 | 659 @ 1.936 |
 
 ### Encode, strong presets (png Balanced = Adaptive + flate2 L6, High = Adaptive + flate2 L9)
 
 | group | png-balanced | pngz-balanced | pf-default | png-high | pngz-high | pf-best |
 |---|---|---|---|---|---|---|
-| graphics/16bit | 178 @ 39.708 | 287 @ 37.603 | 132 @ 40.699 | 62 @ 40.573 | 35 @ 42.345 | 68 @ 42.145 |
-| graphics/g8 | 188 @ 32.794 | 274 @ 33.606 | 169 @ 35.053 | 68 @ 32.715 | 39 @ 35.154 | 78 @ 37.186 |
-| graphics/ga8 | 78 @ 18.187 | 117 @ 18.661 | 66 @ 18.181 | 24 @ 19.145 | 13 @ 20.689 | 25 @ 19.357 |
-| graphics/p8 | 154 @ 26.299 | 200 @ 27.102 | 150 @ 29.760 | 57 @ 26.269 | 34 @ 28.386 | 62 @ 32.764 |
-| graphics/rgb8 | 153 @ 34.483 | 365 @ 32.704 | 194 @ 38.186 | 40 @ 34.573 | 37 @ 36.173 | 109 @ 39.153 |
-| graphics/rgba8 | 112 @ 24.980 | 145 @ 24.841 | 84 @ 24.860 | 35 @ 25.895 | 17 @ 27.964 | 34 @ 25.817 |
-| graphics/sub8 | 108 @ 28.214 | 126 @ 28.987 | 129 @ 30.794 | 44 @ 29.524 | 25 @ 32.881 | 53 @ 35.146 |
-| photo/16bit | 11 @ 1.565 | 30 @ 1.584 | 41 @ 1.586 | 6 @ 1.574 | 10 @ 1.569 | 12 @ 1.618 |
-| photo/g8 | 11 @ 1.776 | 38 @ 1.811 | 480 @ 1.966 | 9 @ 1.778 | 10 @ 1.766 | 11 @ 1.966 |
-| photo/ga8 | 8 @ 2.615 | 22 @ 2.642 | 324 @ 2.724 | 3 @ 2.661 | 6 @ 2.677 | 6 @ 2.853 |
-| photo/p8 | 15 @ 1.936 | 37 @ 1.961 | 107 @ 2.037 | 7 @ 1.942 | 11 @ 1.942 | 7 @ 2.099 |
-| photo/rgb8 | 11 @ 1.770 | 39 @ 1.796 | 452 @ 1.888 | 9 @ 1.773 | 12 @ 1.769 | 12 @ 1.927 |
-| photo/rgba8 | 10 @ 2.012 | 32 @ 2.024 | 398 @ 2.142 | 5 @ 2.023 | 8 @ 2.019 | 9 @ 2.196 |
-| photo/sub8 | 9 @ 1.974 | 31 @ 1.996 | 219 @ 2.148 | 4 @ 1.991 | 6 @ 1.996 | 7 @ 2.202 |
-| ALL | 13 @ 2.022 | 37 @ 2.045 | 67 @ 2.086 | 7 @ 2.032 | 10 @ 2.029 | 12 @ 2.130 |
+| graphics/16bit | 191 @ 39.708 | 317 @ 37.603 | 426 @ 40.674 | 67 @ 40.573 | 41 @ 42.345 | 96 @ 45.950 |
+| graphics/g8 | 194 @ 32.794 | 296 @ 33.606 | 431 @ 37.847 | 75 @ 32.715 | 48 @ 35.154 | 109 @ 39.817 |
+| graphics/ga8 | 80 @ 18.187 | 127 @ 18.661 | 155 @ 19.257 | 26 @ 19.145 | 15 @ 20.689 | 31 @ 20.553 |
+| graphics/p8 | 157 @ 26.299 | 230 @ 27.102 | 316 @ 31.178 | 62 @ 26.269 | 41 @ 28.386 | 87 @ 33.758 |
+| graphics/rgb8 | 167 @ 34.483 | 437 @ 32.704 | 589 @ 36.298 | 43 @ 34.573 | 46 @ 36.173 | 139 @ 42.242 |
+| graphics/rgba8 | 123 @ 24.980 | 162 @ 24.841 | 216 @ 25.930 | 39 @ 25.895 | 19 @ 27.964 | 43 @ 28.031 |
+| graphics/sub8 | 112 @ 28.214 | 145 @ 28.987 | 273 @ 34.192 | 49 @ 29.524 | 29 @ 32.881 | 84 @ 37.836 |
+| photo/16bit | 12 @ 1.565 | 34 @ 1.584 | 46 @ 1.586 | 6 @ 1.574 | 11 @ 1.569 | 24 @ 1.592 |
+| photo/g8 | 12 @ 1.776 | 42 @ 1.811 | 350 @ 1.966 | 9 @ 1.778 | 12 @ 1.766 | 30 @ 1.966 |
+| photo/ga8 | 9 @ 2.615 | 24 @ 2.642 | 331 @ 2.724 | 3 @ 2.661 | 7 @ 2.677 | 10 @ 2.727 |
+| photo/p8 | 18 @ 1.936 | 41 @ 1.961 | 113 @ 2.037 | 8 @ 1.942 | 11 @ 1.942 | 22 @ 2.055 |
+| photo/rgb8 | 13 @ 1.770 | 44 @ 1.796 | 489 @ 1.888 | 10 @ 1.773 | 14 @ 1.769 | 31 @ 1.913 |
+| photo/rgba8 | 10 @ 2.012 | 38 @ 2.024 | 359 @ 2.142 | 6 @ 2.023 | 9 @ 2.019 | 21 @ 2.178 |
+| photo/sub8 | 11 @ 1.974 | 34 @ 1.996 | 213 @ 2.148 | 4 @ 1.991 | 6 @ 1.996 | 18 @ 2.163 |
+| ALL | 14 @ 2.022 | 41 @ 2.045 | 79 @ 2.086 | 8 @ 2.032 | 12 @ 2.029 | 26 @ 2.101 |
 
-### Decode (image-rs API vs pngfast IMAGERS output; png crate IDENTITY vs pngfast RAW; Adam7 copies included)
+### Encode with the backend forced (`#ld` = PF_BACKEND_LIBDEFLATE = pngfast 1.0, `#zng` = PF_BACKEND_ZLIBNG)
 
-| group | imagers | png-raw | v3-imagers | pf-imagers | pf-raw |
-|---|---|---|---|---|---|
-| graphics/16bit | 720 | 1045 | 1210 | 938 | 1575 |
-| graphics/g8 | 265 | 874 | 679 | 658 | 727 |
-| graphics/ga8 | 532 | 453 | 820 | 690 | 545 |
-| graphics/p8 | 377 | 1417 | 1116 | 745 | 2168 |
-| graphics/rgb8 | 536 | 848 | 1375 | 1009 | 1431 |
-| graphics/rgba8 | 661 | 685 | 1407 | 1119 | 1240 |
-| graphics/sub8 | 148 | 350 | 353 | 235 | 286 |
-| photo/16bit | 198 | 236 | 277 | 271 | 272 |
-| photo/g8 | 108 | 179 | 241 | 251 | 222 |
-| photo/ga8 | 221 | 230 | 383 | 353 | 277 |
-| photo/p8 | 255 | 347 | 336 | 365 | 430 |
-| photo/rgb8 | 176 | 203 | 287 | 282 | 293 |
-| photo/rgba8 | 231 | 212 | 326 | 338 | 367 |
-| photo/sub8 | 127 | 310 | 232 | 235 | 339 |
-| ALL | 226 | 283 | 348 | 336 | 352 |
+| group | pf-default-ld | pf-default-zng | pf-best-ld | pf-best-zng | pf-fastest-zng | pf-fast-zng |
+|---|---|---|---|---|---|---|
+| graphics/16bit | 359 @ 39.272 | 422 @ 40.674 | 16 @ 45.479 | 52 @ 46.764 | 1575 @ 21.807 | 941 @ 31.189 |
+| graphics/g8 | 335 @ 34.830 | 444 @ 37.847 | 109 @ 37.438 | 75 @ 40.225 | 1679 @ 20.433 | 855 @ 29.368 |
+| graphics/ga8 | 142 @ 18.748 | 147 @ 19.257 | 8 @ 21.817 | 16 @ 21.360 | 937 @ 9.901 | 567 @ 14.159 |
+| graphics/p8 | 325 @ 29.531 | 312 @ 31.178 | 87 @ 33.045 | 65 @ 33.998 | 1464 @ 17.227 | 748 @ 23.100 |
+| graphics/rgb8 | 449 @ 35.737 | 578 @ 36.298 | 165 @ 39.789 | 78 @ 42.838 | 2004 @ 22.508 | 1105 @ 31.253 |
+| graphics/rgba8 | 191 @ 25.586 | 212 @ 25.930 | 11 @ 28.025 | 21 @ 29.080 | 1194 @ 13.772 | 700 @ 18.820 |
+| graphics/sub8 | 292 @ 29.289 | 268 @ 34.192 | 71 @ 36.038 | 52 @ 37.988 | 1409 @ 16.604 | 630 @ 22.954 |
+| photo/16bit | 45 @ 1.586 | 36 @ 1.589 | 23 @ 1.592 | 12 @ 1.574 | 123 @ 1.174 | 80 @ 1.562 |
+| photo/g8 | 526 @ 1.966 | 47 @ 1.812 | 30 @ 1.966 | 13 @ 1.767 | 123 @ 1.196 | 80 @ 1.786 |
+| photo/ga8 | 316 @ 2.724 | 25 @ 2.644 | 10 @ 2.727 | 8 @ 2.679 | 187 @ 1.592 | 121 @ 2.449 |
+| photo/p8 | 103 @ 2.037 | 36 @ 2.004 | 22 @ 2.055 | 12 @ 1.987 | 149 @ 1.481 | 100 @ 1.918 |
+| photo/rgb8 | 461 @ 1.888 | 48 @ 1.798 | 31 @ 1.913 | 15 @ 1.770 | 128 @ 1.195 | 79 @ 1.772 |
+| photo/rgba8 | 341 @ 2.142 | 39 @ 2.026 | 20 @ 2.178 | 10 @ 2.021 | 128 @ 1.327 | 94 @ 1.958 |
+| photo/sub8 | 215 @ 2.148 | 37 @ 2.046 | 18 @ 2.163 | 7 @ 2.044 | 159 @ 1.422 | 98 @ 1.988 |
+| ALL | 78 @ 2.085 | 44 @ 2.055 | 21 @ 2.101 | 13 @ 2.038 | 153 @ 1.460 | 99 @ 2.006 |
 
-Graphics rows re-run at low load with 15 reps (the small graphics files are noise-sensitive):
+AUTO equals `#ld` for FASTEST/FAST and photos (same code path; differences are noise) and `#zng` for DEFAULT
+graphics; BEST graphics uses zlib-ng L9 with chain 1024 (between the two BEST columns in speed).
 
-| group | imagers | png-raw | v3-imagers | pf-imagers | pf-raw |
-|---|---|---|---|---|---|
-| graphics/16bit | 778 | 1152 | 948 | 951 | 1279 |
-| graphics/g8 | 264 | 947 | 694 | 733 | 1019 |
-| graphics/ga8 | 544 | 514 | 762 | 807 | 839 |
-| graphics/p8 | 442 | 1615 | 1126 | 1156 | 2668 |
-| graphics/rgb8 | 554 | 971 | 1294 | 1393 | 1899 |
-| graphics/rgba8 | 730 | 737 | 1343 | 1437 | 1396 |
-| graphics/sub8 | 170 | 382 | 325 | 384 | 397 |
-| ALL | 583 | 958 | 919 | 953 | 1223 |
+### Decode (image-rs API vs pngfast IMAGERS output; png crate IDENTITY vs pngfast RAW)
 
-`v3-imagers` is the pre-cleanup prototype, kept only as a regression check.
+Decoder unchanged in 1.1; re-measured as a no-regression check (phase 3 ALL: pf-imagers 389 / imagers 261,
+now 359 / 252 under higher load, same ratio within noise; every group still ahead).
+
+| group | pf-imagers | pf-raw | imagers | png-raw |
+|---|---|---|---|---|
+| graphics/16bit | 1403 | 2519 | 972 | 1546 |
+| graphics/g8 | 831 | 1151 | 291 | 1000 |
+| graphics/ga8 | 961 | 948 | 618 | 603 |
+| graphics/p8 | 1824 | 5248 | 1047 | 2867 |
+| graphics/rgb8 | 1658 | 2371 | 693 | 1541 |
+| graphics/rgba8 | 1877 | 1834 | 1065 | 1083 |
+| graphics/sub8 | 560 | 5108 | 286 | 2680 |
+| photo/16bit | 302 | 346 | 233 | 265 |
+| photo/g8 | 270 | 300 | 126 | 193 |
+| photo/ga8 | 419 | 433 | 251 | 253 |
+| photo/p8 | 413 | 548 | 318 | 398 |
+| photo/rgb8 | 310 | 341 | 190 | 225 |
+| photo/rgba8 | 351 | 402 | 261 | 263 |
+| photo/sub8 | 283 | 553 | 170 | 380 |
+| ALL | 359 | 423 | 252 | 304 |
+
+Inflate (MB/s) incl. zlib-ng: libdeflate stays the decoder (patched pair decoding 570 vs zlib-ng 363 MB/s).
+
+| group | libdeflate | pf-pairs | zlib-ng | fdeflate |
+|---|---|---|---|---|
+| stream from fdeflate-1 | 383 | 664 | 367 | 517 |
+| stream from fdeflate-ultrafast | 391 | 640 | 379 | 515 |
+| stream from libdeflate-pf | 387 | 643 | 378 | 573 |
+| stream from orig | 389 | 553 | 362 | 459 |
+| stream from zng6 | 383 | 426 | 334 | 331 |
+| ALL | 387 | 570 | 363 | 462 |
 
 ### Raw zlib (filtered IDAT data; fdeflate vs pngfast's libdeflate)
 
@@ -253,16 +276,9 @@ Graphics rows re-run at low load with 15 reps (the small graphics files are nois
 | ALL | 415 | 360 | 502 |
 
 ### Where the png crate still wins
-* **png Fastest on graphics**: pngfast FASTEST compresses 33-52% better but is 6-40% slower on 6 of 7 graphics groups
-  (16-bit 1066 vs 1787 MB/s, rgba8 708 vs 1021). fdeflate UltraFast writes a fixed Huffman code in one pass;
-  pngfast builds per-block optimal codes (histogram + bit writer = ~40% of the time). Photo p8: 11% slower
-  (but 14% smaller).
-* **png Balanced with zlib-rs on graphics**: zlib-rs L6 is 1.3-2.2x faster than DEFAULT on 6 of 7 graphics
-  groups; DEFAULT is 3-17% smaller except ga8 (-2.6%) and rgba8 (tie). Against miniz_oxide Balanced, DEFAULT
-  is smaller on 5/7 graphics groups and slower on 5/7.
-* **png High with zlib-rs on alpha graphics**: BEST is faster everywhere but 6-8% larger on ga8/rgba8 and 0.5%
-  on 16-bit graphics (zlib's lazy parser beats libdeflate L9/L10 on that content even at search depth 4096).
-* **png Fast**: no single pngfast preset dominates it everywhere; FAST is always much smaller (graphics
-  ratio 2-3x) but slower on graphics; FASTEST dominates png Fast (faster *and* smaller) on every graphics group
-  and on photo 16-bit/ga8/p8/sub8, FAST dominates it on photo g8/rgb8/rgba8.
-* Raw deflate on graphics: fdeflate UltraFast 1041 MB/s vs pngfast run-only 796 MB/s (ratio 1.81 vs 2.89).
+* **png High with zlib-rs, graphics ga8**: BEST 31 MB/s @ 20.55 vs 15 @ 20.69 (0.7% larger, 2x faster).
+  zlib-ng chain 1536 reaches 20.83 but then loses speed to miniz High (26 vs 26-28 MB/s).
+* **png Fastest, graphics 16-bit**: speed tie (1905 vs 1912 MB/s) at 42% better ratio.
+* Everything else: each pngfast preset is faster *and* smaller than its png counterpart with either flate2
+  backend in every group (phase-3 losses on DEFAULT rgb8/16-bit and BEST alpha/16-bit are closed by zlib-ng).
+* Raw deflate on graphics: fdeflate UltraFast is still faster as a raw compressor (table above: 1041 vs 796 MB/s).
