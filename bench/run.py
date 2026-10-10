@@ -35,6 +35,8 @@ ENCODE = {
     "pf-fast":          [PFBENCH, "encode", "fast", "{R}"],
     "pf-default":       [PFBENCH, "encode", "default", "{R}"],
     "pf-best":          [PFBENCH, "encode", "best", "{R}"],
+    # exploration
+    **{f"pf-u{f}": [PFBENCH, "encode", f"fast:{f}:ultra", "{R}"] for f in (0, 1, 2, 4, 5)},
     # exploration: adaptive filter + libdeflate level N
     **{f"pf-l{n}": [PFBENCH, "encode", f"fast:5:{n}", "{R}"] for n in (1, 3, 5, 6, 7, 8, 9, 10, 11, 12)},
 }

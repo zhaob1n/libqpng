@@ -17,11 +17,11 @@ int main(int argc, char **argv) {
         if (o.trns && ((src.color_type == PF_COLOR_GRAY && tl != 2) || (src.color_type == PF_COLOR_RGB && tl != 6) ||
                        (src.color_type == PF_COLOR_PALETTE && tl > o.palette_entries) || src.color_type == PF_COLOR_RGBA ||
                        src.color_type == PF_COLOR_GRAY_ALPHA)) { o.trns = NULL; o.trns_bytes = 0; }
-        for (int v = 0; v < 4 + 6 + 3; v++) {
+        for (int v = 0; v < 4 + 6 + 4; v++) {
             pf_encode_options e = o;
             if (v < 4) e.preset = (pf_preset)v;
             else if (v < 10) { e.preset = PF_PRESET_FAST; e.filter = v - 4; }
-            else e.deflate_level = (int[]){ PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH, 1 }[v - 10];
+            else e.deflate_level = (int[]){ PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH, 1, PF_DEFLATE_PNGULTRA }[v - 10];
             uint8_t *png; size_t pn;
             pf_status s = pf_encode(src.pixels, src.width, src.height, src.stride, (pf_color)src.color_type, src.bit_depth, &e, &png, &pn);
             runs++;

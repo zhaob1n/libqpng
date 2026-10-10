@@ -17,6 +17,7 @@ static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uin
 
 static struct libdeflate_compressor *make_compressor(int level) {
     if (level < PF_DEFLATE_PNGFAST) return libdeflate_alloc_compressor(level);
+    if (level == PF_DEFLATE_PNGULTRA) return libdeflate_alloc_compressor(LIBDEFLATE_PNG_ULTRA_LEVEL);
     struct libdeflate_compressor *c = libdeflate_alloc_compressor(LIBDEFLATE_PNG_FAST_LEVEL);
     if (c && level == PF_DEFLATE_PNGFAST_RLE) libdeflate_set_png_min_match(c, 0);
     if (c && level == PF_DEFLATE_PNGFAST_HIGH) libdeflate_set_png_params(c, 0, 9);
@@ -89,7 +90,8 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     }
     if (opts->filter >= 0) { if (opts->filter > PF_FILTER_ADAPTIVE) return PF_ERR_ARGUMENT; filter = opts->filter; }
     if (opts->deflate_level) level = opts->deflate_level;
-    if (!((level >= 1 && level <= 12) || level == PF_DEFLATE_PNGFAST || level == PF_DEFLATE_PNGFAST_RLE || level == PF_DEFLATE_PNGFAST_HIGH))
+    if (!((level >= 1 && level <= 12) || level == PF_DEFLATE_PNGFAST || level == PF_DEFLATE_PNGFAST_RLE || level == PF_DEFLATE_PNGFAST_HIGH ||
+          level == PF_DEFLATE_PNGULTRA))
         return PF_ERR_ARGUMENT;
 
     uint8_t *filt = pf__alloc(A, rawn + 64);

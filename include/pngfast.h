@@ -140,6 +140,7 @@ typedef enum {
 #define PF_DEFLATE_PNGFAST      100  /* default png-fast */
 #define PF_DEFLATE_PNGFAST_RLE  101  /* runs only (no hash probes): fastest */
 #define PF_DEFLATE_PNGFAST_HIGH 102  /* denser probing (skip shift 9) */
+#define PF_DEFLATE_PNGULTRA     103  /* single pass, runs only, sampled Huffman codes: fastest */
 
 typedef struct {
     pf_preset preset;          /* default PF_PRESET_DEFAULT */

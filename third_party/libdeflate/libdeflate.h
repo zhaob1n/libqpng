@@ -66,6 +66,9 @@ libdeflate_alloc_compressor(int compression_level);
  * Output is ordinary DEFLATE/zlib/gzip.
  */
 #define LIBDEFLATE_PNG_FAST_LEVEL 100
+/* png-ultra: single-pass run-only mode with sampled per-block Huffman codes
+ * (fastest; png_params block_len applies). */
+#define LIBDEFLATE_PNG_ULTRA_LEVEL 101
 LIBDEFLATEAPI void
 libdeflate_set_png_params(struct libdeflate_compressor *compressor,
 			  unsigned block_len, unsigned skip_shift);

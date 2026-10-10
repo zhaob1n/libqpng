@@ -80,6 +80,9 @@
  */
 #define SOFT_MAX_BLOCK_LENGTH	300000
 
+/* png-ultra worst-case block size: 14-bit literals, <= 40 bits per 3-byte run, header */
+#define PNGU_WORST(n)	(2 * (n) + 1024)
+
 /*
  * For the greedy, lazy, and lazy2 compressors: this is the length of the
  * sequence store, which is an array where the compressor temporarily stores
@@ -548,6 +551,11 @@ struct libdeflate_compressor {
 			struct deflate_sequence sequences[
 						FAST_SEQ_STORE_LENGTH + 1];
 		} pf;
+
+		/* png-ultra: blocks are written here when the output is tight */
+		struct {
+			u8 scratch[PNGU_WORST(SOFT_MAX_BLOCK_LENGTH)];
+		} pu;
 
 	#if SUPPORT_NEAR_OPTIMAL_PARSING
 		/* Data for near-optimal parsing */
@@ -2836,6 +2844,318 @@ deflate_compress_png_fast(struct libdeflate_compressor * restrict c,
 }
 
 /*
+ * png-ultra: single-pass run-only compressor (fdeflate "UltraFast" class, but
+ * with a per-block dynamic Huffman code).
+ *
+ * For each block (png_block_len bytes) the code is built from a *sampled*
+ * dry run (every 4th 512-byte chunk is parsed and counted; every symbol gets a
+ * floor count of 1 so unsampled data is always encodable), the header is
+ * written, and the block is then parsed and written in one pass: SWAR test of
+ * 4 run starts per 64-bit load, literals 4 at a time, runs as offset-1
+ * matches.  A block that would come out larger than stored is rewritten as
+ * stored block(s), so libdeflate's output bound still holds.
+ */
+#define PNGU_SAMPLE_CHUNK	512
+#define PNGU_SAMPLE_EVERY	8
+
+/* bitmask (bit 7 of byte i) of positions 0..3 in v that start 5 equal bytes */
+static forceinline u64
+pngu_run_starts(u64 v)
+{
+	const u64 lo7 = 0x7f7f7f7f7f7f7f7fULL;
+	const u64 z = v ^ (v >> 8);
+	u64 m = ~(((z & lo7) + lo7) | z | lo7);
+
+	m &= m >> 8;
+	m &= m >> 16;
+	return m & 0x80808080ULL;
+}
+
+/* length of the run of byte b starting at p (p[0] == b), capped at max */
+static forceinline u32
+pngu_run_len(const u8 *p, u8 b, u32 max, const u8 *in_end)
+{
+	const u64 bb = 0x0101010101010101ULL * b;
+	u32 len = 0;
+
+	while (len + 32 <= max && p + len + 32 <= in_end) {
+		const u64 x0 = get_unaligned_le64(p + len) ^ bb;
+		const u64 x1 = get_unaligned_le64(p + len + 8) ^ bb;
+		const u64 x2 = get_unaligned_le64(p + len + 16) ^ bb;
+		const u64 x3 = get_unaligned_le64(p + len + 24) ^ bb;
+		if (x0 | x1 | x2 | x3) {
+			if (x0)
+				return len + (bsf64(x0) >> 3);
+			if (x1)
+				return len + 8 + (bsf64(x1) >> 3);
+			if (x2)
+				return len + 16 + (bsf64(x2) >> 3);
+			return len + 24 + (bsf64(x3) >> 3);
+		}
+		len += 32;
+	}
+	while (len + 8 <= max && p + len + 8 <= in_end) {
+		u64 x = get_unaligned_le64(p + len) ^ bb;
+		if (x)
+			return len + (bsf64(x) >> 3);
+		len += 8;
+	}
+	while (len < max && p + len < in_end && p[len] == b)
+		len++;
+	return len;
+}
+
+/* split a run of 'len' offset-1 bytes into match lengths (all >= 3); calls f */
+#define PNGU_FOR_RUN(len, l, BODY)					\
+	while ((len) >= DEFLATE_MIN_MATCH_LEN) {			\
+		u32 l = MIN((len), DEFLATE_MAX_MATCH_LEN);		\
+		if ((len) - l != 0 && (len) - l < DEFLATE_MIN_MATCH_LEN) \
+			l = (len) - DEFLATE_MIN_MATCH_LEN;		\
+		BODY;							\
+		(len) -= l;						\
+	}
+
+/* dry run over [p, end): count literal / length symbols into freqs */
+static void
+pngu_count(struct deflate_freqs *f, const u8 *in, const u8 *p, const u8 *end,
+	   const u8 *in_end)
+{
+	while (p + 16 <= end) {
+		u64 m = pngu_run_starts(get_unaligned_le64(p));
+		u32 k, len;
+		u8 b;
+
+		if (!m) {
+			f->litlen[p[0]]++; f->litlen[p[1]]++;
+			f->litlen[p[2]]++; f->litlen[p[3]]++;
+			p += 4;
+			continue;
+		}
+		for (k = bsf64(m) >> 3; k; k--)
+			f->litlen[*p++]++;
+		b = *p;
+		if (p == in || p[-1] != b)
+			f->litlen[*p++]++;
+		len = pngu_run_len(p, b, end - p, in_end);
+		p += len;
+		PNGU_FOR_RUN(len, l,
+			f->litlen[DEFLATE_FIRST_LEN_SYM + deflate_length_slot[l]]++);
+		p -= len;	/* leftover (< 3) bytes become literals */
+	}
+	while (p < end)
+		f->litlen[*p++]++;
+}
+
+/* write [p, len) as stored block(s); os must have room */
+static void
+pngu_write_stored(struct deflate_output_bitstream *os, const u8 *p, size_t n,
+		  bool is_final)
+{
+	do {
+		size_t len = MIN(n, UINT16_MAX);
+		u8 bfinal = is_final && len == n;
+		u8 *out = os->next;
+
+		*out++ = (bfinal << os->bitcount) | os->bitbuf;
+		if (os->bitcount > 5)
+			*out++ = 0;
+		os->bitbuf = 0;
+		os->bitcount = 0;
+		put_unaligned_le16(len, out);
+		put_unaligned_le16(~len, out + 2);
+		memcpy(out + 4, p, len);
+		os->next = out + 4 + len;
+		p += len;
+		n -= len;
+	} while (n);
+}
+
+/* write the dynamic block header for c->codes (after precompute_huffman_header) */
+static void
+pngu_write_header(struct libdeflate_compressor *c,
+		  struct deflate_output_bitstream *os, bool is_final)
+{
+	bitbuf_t bitbuf = os->bitbuf;
+	unsigned bitcount = os->bitcount;
+	u8 *out_next = os->next;
+	u8 * const out_fast_end = os->end - MIN(WORDBYTES - 1, os->end - out_next);
+	unsigned i;
+
+	ADD_BITS(is_final, 1);
+	ADD_BITS(DEFLATE_BLOCKTYPE_DYNAMIC_HUFFMAN, 2);
+	ADD_BITS(c->o.precode.num_litlen_syms - 257, 5);
+	ADD_BITS(c->o.precode.num_offset_syms - 1, 5);
+	ADD_BITS(c->o.precode.num_explicit_lens - 4, 4);
+	FLUSH_BITS();
+	for (i = 0; i < c->o.precode.num_explicit_lens; i++) {
+		ADD_BITS(c->o.precode.lens[deflate_precode_lens_permutation[i]], 3);
+		FLUSH_BITS();
+	}
+	for (i = 0; i < c->o.precode.num_items; i++) {
+		unsigned item = c->o.precode.items[i];
+		unsigned sym = item & 0x1F;
+
+		ADD_BITS(c->o.precode.codewords[sym], c->o.precode.lens[sym]);
+		ADD_BITS(item >> 5, deflate_extra_precode_bits[sym]);
+		FLUSH_BITS();
+	}
+	os->bitbuf = bitbuf;
+	os->bitcount = bitcount;
+	os->next = out_next;
+}
+
+/* parse + write one block with c->codes; os must have room for the worst case */
+static void
+pngu_write_block(struct libdeflate_compressor *c,
+		 struct deflate_output_bitstream *os, const u8 *in,
+		 const u8 *block_begin, const u8 *block_end, const u8 *in_end,
+		 bool is_final)
+{
+	bitbuf_t bitbuf;
+	unsigned bitcount;
+	u8 *out_next;
+	u8 *out_fast_end;
+	const u32 *cw = c->codes.codewords.litlen;
+	const u8 *cl = c->codes.lens.litlen;
+	const u8 *ip = block_begin;
+	u32 run_bits[DEFLATE_MAX_MATCH_LEN + 1];
+	u8 run_nbits[DEFLATE_MAX_MATCH_LEN + 1];
+	u32 len;
+
+	pngu_write_header(c, os, is_final);
+	/* offset-1 match = full length codeword + offset slot 0 (no extra bits) */
+	deflate_compute_full_len_codewords(c, &c->codes);
+	for (len = DEFLATE_MIN_MATCH_LEN; len <= DEFLATE_MAX_MATCH_LEN; len++) {
+		run_bits[len] = c->o.length.codewords[len] |
+			((u32)c->codes.codewords.offset[0] << c->o.length.lens[len]);
+		run_nbits[len] = c->o.length.lens[len] + c->codes.lens.offset[0];
+	}
+	bitbuf = os->bitbuf;
+	bitcount = os->bitcount;
+	out_next = os->next;
+	out_fast_end = os->end - (WORDBYTES - 1);
+#define PNGU_LIT(x)	do { const unsigned s_ = (x); ADD_BITS(cw[s_], cl[s_]); } while (0)
+	while (ip + 16 <= block_end) {
+		u64 m = pngu_run_starts(get_unaligned_le64(ip));
+		u32 k;
+		u8 b;
+
+		if (likely(!m)) {
+			/* 4 literals, then probe the next 4 starts too */
+			PNGU_LIT(ip[0]); PNGU_LIT(ip[1]);
+			PNGU_LIT(ip[2]); PNGU_LIT(ip[3]);
+			FLUSH_BITS();
+			ip += 4;
+			m = pngu_run_starts(get_unaligned_le64(ip));
+			if (likely(!m)) {
+				PNGU_LIT(ip[0]); PNGU_LIT(ip[1]);
+				PNGU_LIT(ip[2]); PNGU_LIT(ip[3]);
+				FLUSH_BITS();
+				ip += 4;
+				continue;
+			}
+		}
+		for (k = bsf64(m) >> 3; k; k--)
+			PNGU_LIT(*ip++);
+		b = *ip;
+		if (ip == in || ip[-1] != b)
+			PNGU_LIT(*ip++);
+		FLUSH_BITS();
+		len = pngu_run_len(ip, b, block_end - ip, in_end);
+		ip += len;
+		PNGU_FOR_RUN(len, l, {
+			ADD_BITS(run_bits[l], run_nbits[l]);
+			FLUSH_BITS();
+		});
+		ip -= len;	/* 0-2 leftover bytes are parsed again */
+	}
+	while (ip < block_end) {
+		PNGU_LIT(*ip++);
+		FLUSH_BITS();
+	}
+	PNGU_LIT(DEFLATE_END_OF_BLOCK);
+	FLUSH_BITS();
+#undef PNGU_LIT
+	os->bitbuf = bitbuf;
+	os->bitcount = bitcount;
+	os->next = out_next;
+}
+
+static void
+deflate_compress_png_ultra(struct libdeflate_compressor * restrict c,
+			   const u8 *in, size_t in_nbytes,
+			   struct deflate_output_bitstream *os)
+{
+	const u8 *in_next = in;
+	const u8 * const in_end = in + in_nbytes;
+
+	do {
+		const u8 * const block_begin = in_next;
+		size_t blen = MIN((size_t)c->png_block_len, (size_t)(in_end - in_next));
+		const u8 *p;
+		unsigned sym;
+		bool is_final;
+		size_t stored_size, n;
+		struct deflate_output_bitstream bs;
+		bool tight;
+		u8 *base;
+
+		if ((size_t)(in_end - in_next) - blen < 4096)
+			blen = in_end - in_next;	/* no tiny final block */
+		is_final = block_begin + blen == in_end;
+		stored_size = blen + 5 * DIV_ROUND_UP(blen, UINT16_MAX) +
+			      (os->bitcount > 5);
+
+		/* 1. code from a sampled dry run; every symbol stays encodable */
+		memset(&c->freqs, 0, sizeof(c->freqs));
+		for (p = block_begin; p < block_begin + blen;
+		     p += PNGU_SAMPLE_CHUNK * PNGU_SAMPLE_EVERY)
+			pngu_count(&c->freqs, in, p,
+				   MIN(p + PNGU_SAMPLE_CHUNK, block_begin + blen),
+				   in_end);
+		for (sym = 0; sym < DEFLATE_NUM_LITLEN_SYMS; sym++)
+			c->freqs.litlen[sym] = c->freqs.litlen[sym] *
+					       PNGU_SAMPLE_EVERY + 1;
+		c->freqs.offset[0] = 1;
+		deflate_make_huffman_codes(&c->freqs, &c->codes);
+		deflate_precompute_huffman_header(c);
+
+		/* 2. write directly, or to scratch when the output is tight */
+		tight = (size_t)(os->end - os->next) < PNGU_WORST(blen);
+		bs = *os;
+		if (tight) {
+			bs.next = c->p.pu.scratch;
+			bs.end = c->p.pu.scratch + sizeof(c->p.pu.scratch);
+		}
+		base = bs.next;
+		pngu_write_block(c, &bs, in, block_begin, block_begin + blen,
+				 in_end, is_final);
+
+		/* 3. keep it only if not larger than stored (keeps the bound);
+		 *    +1 for the pending partial byte */
+		n = bs.next - base;
+		if (n + 1 <= stored_size &&
+		    (!tight || (size_t)(os->end - os->next) >= n + 1)) {
+			if (tight) {
+				memcpy(os->next, base, n);
+				bs.next = os->next + n;
+				bs.end = os->end;
+			}
+			*os = bs;
+			in_next += blen;
+			continue;
+		}
+		/* stored fallback */
+		if ((size_t)(os->end - os->next) < stored_size) {
+			os->overflow = true;
+			return;
+		}
+		pngu_write_stored(os, block_begin, blen, is_final);
+		in_next += blen;
+	} while (in_next != in_end);
+}
+
+/*
  * This is the "greedy" DEFLATE compressor. It always chooses the longest match.
  */
 static void
@@ -4205,8 +4525,10 @@ libdeflate_alloc_compressor_ex(int compression_level,
 	if (compression_level == -1)
 		compression_level = 6;
 
-	if (compression_level == LIBDEFLATE_PNG_FAST_LEVEL) {
-		size += sizeof(c->p.pf);
+	if (compression_level == LIBDEFLATE_PNG_FAST_LEVEL ||
+	    compression_level == LIBDEFLATE_PNG_ULTRA_LEVEL) {
+		size += compression_level == LIBDEFLATE_PNG_ULTRA_LEVEL ?
+			sizeof(c->p.pu) : sizeof(c->p.pf);
 		c = libdeflate_aligned_malloc(options->malloc_func ?
 					      options->malloc_func :
 					      libdeflate_default_malloc_func,
@@ -4219,8 +4541,10 @@ libdeflate_alloc_compressor_ex(int compression_level,
 		c->max_passthrough_size = 32;
 		c->max_search_depth = 1;
 		c->nice_match_length = DEFLATE_MAX_MATCH_LEN;
-		c->impl = deflate_compress_png_fast;
-		c->png_block_len = 131072;
+		c->impl = compression_level == LIBDEFLATE_PNG_ULTRA_LEVEL ?
+			  deflate_compress_png_ultra : deflate_compress_png_fast;
+		c->png_block_len = compression_level == LIBDEFLATE_PNG_ULTRA_LEVEL ?
+				   65536 : 131072;
 		c->png_skip_shift = 5;
 		c->png_min_hash_len = 8;
 		c->png_short_base = 16;

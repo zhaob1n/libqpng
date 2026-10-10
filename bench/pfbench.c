@@ -1,7 +1,7 @@
 /* pfbench - pngfast side of the benchmark (bench/run.py drives this and tools/rsref).
  *   pfbench decode raw|expand|imagers REPS file.png...
  *   pfbench encode PRESET[:FILTER[:LEVEL]] REPS file.png...   (source decoded to raw untimed; same format re-encoded)
- *   pfbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh
+ *   pfbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh | ultra
  *   pfbench inflate stock|pairs REPS orig:stream.zlib...
  * CSV: tool,op,param,file,rep,width,height,ns,bytes. Each timing covers setup + allocation + work; 1 warm-up rep.
  * DUMP_DIR=dir writes the last encoded PNG / compressed stream. */
@@ -40,7 +40,8 @@ static int parse_preset(const char *s) {
            !strncmp(s, "best", 4) ? PF_PRESET_BEST : PF_PRESET_DEFAULT;
 }
 static int deflate_level(const char *s) {
-    return !strcmp(s, "pf") ? LIBDEFLATE_PNG_FAST_LEVEL : !strcmp(s, "pfrle") ? -1 : !strcmp(s, "pfhigh") ? -2 : atoi(s);
+    return !strcmp(s, "pf") ? LIBDEFLATE_PNG_FAST_LEVEL : !strcmp(s, "pfrle") ? -1 : !strcmp(s, "pfhigh") ? -2 :
+           !strcmp(s, "ultra") ? -3 : atoi(s);
 }
 
 int main(int argc, char **argv) {
@@ -69,7 +70,7 @@ int main(int argc, char **argv) {
             size_t cap = n + n / 8 + 65536; unsigned char *out = malloc(cap), *chk = malloc(n + 1);
             for (int r = 0; r <= reps; r++) {
                 long long t0 = now_ns();
-                struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL : lv);
+                struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv == -3 ? LIBDEFLATE_PNG_ULTRA_LEVEL : lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL : lv);
                 if (lv == -1) libdeflate_set_png_min_match(c, 0);
                 if (lv == -2) libdeflate_set_png_params(c, 0, 9);
                 size_t m = libdeflate_zlib_compress(c, buf, n, out, cap);

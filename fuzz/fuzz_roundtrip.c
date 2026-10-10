@@ -34,8 +34,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     pf_encode_options_init(&eo);
     eo.preset = (pf_preset)(knob & 3);
     eo.filter = (knob >> 2) % 7 - 1;                                   /* AUTO, NONE..ADAPTIVE */
-    static const int levels[] = {0, 0, 0, 1, 6, 9, 12, PF_DEFLATE_PNGFAST, PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH};
-    eo.deflate_level = levels[(knob >> 5) % 10];
+    static const int levels[] = {0, 0, 0, 1, 6, 9, 12, PF_DEFLATE_PNGFAST, PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH, PF_DEFLATE_PNGULTRA};
+    eo.deflate_level = levels[(knob >> 5) % 11];
     if (FMT[f].c == PF_COLOR_PALETTE) { eo.palette = pal; eo.palette_entries = 1 << (FMT[f].d < 8 ? FMT[f].d : 7); }
 
     uint8_t *png = NULL; size_t pn = 0;
