@@ -133,14 +133,23 @@ __attribute__((target("avx2"))) static void costs_avx2(const uint8_t *cur, const
 }
 
 void pf__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int mode) {
+    pf__filter_rows(dst, px, stride, 0, h, n, bpp, mode);
+}
+
+void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0, uint32_t y1, size_t n, int bpp,
+                     int mode) {
     const int avx2 = pf__have_avx2();
     uint8_t zrow_small[4096 + 64];
-    uint8_t *zrow = n + 64 <= sizeof zrow_small ? zrow_small : calloc(1, n + 64);
-    if (zrow == zrow_small) memset(zrow, 0, n + 64);
+    /* the all-zero predecessor of row 0 (only needed if row 0 is in range) */
+    uint8_t *zrow = zrow_small;
+    if (y0 == 0) {
+        if (n + 64 > sizeof zrow_small) zrow = calloc(1, n + 64);
+        else memset(zrow, 0, n + 64);
+    }
     if (!zrow) { mode = 0; zrow = zrow_small; }   /* out of memory for the zero row: filter None needs no prev */
-    for (uint32_t y = 0; y < h; y++) {
+    for (uint32_t y = y0; y < y1; y++) {
         const uint8_t *cur = px + (size_t)y * stride, *prev = y ? cur - stride : zrow;
-        uint8_t *o = dst + (size_t)y * (n + 1);
+        uint8_t *o = dst + (size_t)(y - y0) * (n + 1);
         int f = mode;
         if (mode == PF_FILTER_ADAPTIVE) {
             uint64_t cost[5];

@@ -47,6 +47,47 @@ static size_t zcompress(int level, const uint8_t *src, size_t n, uint8_t *dst, s
     return zn;
 }
 
+/*
+ * png-ultra streaming: rows are filtered into a small (L2-sized) buffer and compressed chunk by chunk, so the
+ * filtered image is never materialised. Chunks are ~64 KiB, 256 KiB once the data compresses >= 4:1.
+ * hybrid: chunks following a >= 4:1 chunk (graphics-like) use the Up filter instead of 'filter' (FAST preset).
+ * Writes a zlib stream to dst; returns its size or 0.
+ */
+#define ULTRA_CHUNK      65536
+#define ULTRA_CHUNK_BIG  262144
+#define ULTRA_MIN_TAIL   4096
+static size_t zcompress_ultra(const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int filter,
+                              int hybrid, uint8_t *dst, size_t cap, const pf_allocator *A, pf_status *st) {
+    const size_t row = n + 1;
+    const size_t max_rows = (ULTRA_CHUNK_BIG + ULTRA_MIN_TAIL) / row + 2;
+    struct libdeflate_compressor *c = make_compressor(PF_DEFLATE_PNGULTRA);
+    uint8_t *buf = pf__alloc(A, max_rows * row + 1 + 64);
+    struct libdeflate_png_ultra_state us = { 0, 0, 0 };
+    uint32_t adler = 1;
+    size_t zn = 2, target = ULTRA_CHUNK;
+    if (!c || !buf || cap < 6) { *st = c && buf ? PF_ERR_ENCODE : PF_ERR_NOMEM; zn = 0; goto done; }
+    dst[0] = 0x78; dst[1] = 0x01;
+    for (uint32_t y = 0; y < h;) {
+        uint32_t k = (uint32_t)(target / row ? target / row : 1);
+        if (k > h - y) k = h - y;
+        if ((size_t)(h - y - k) * row < ULTRA_MIN_TAIL && (size_t)(h - y) <= max_rows) k = h - y;   /* no tiny tail */
+        const size_t len = (size_t)k * row;
+        pf__filter_rows(buf + 1, px, stride, y, y + k, n, bpp, hybrid && target == ULTRA_CHUNK_BIG ? PF_FILTER_UP : filter);
+        adler = libdeflate_adler32(adler, buf + 1, len);
+        y += k;
+        size_t o = libdeflate_png_ultra_compress_chunk(c, &us, buf + 1, len, y == h, dst + zn, cap - zn - 4);
+        if (!o) { *st = PF_ERR_ENCODE; zn = 0; goto done; }
+        zn += o;
+        buf[0] = buf[len];   /* the parser may look one byte back */
+        target = o * 4 < len ? ULTRA_CHUNK_BIG : ULTRA_CHUNK;
+    }
+    wbe32(dst + zn, adler); zn += 4;
+done:
+    pf__free(A, buf);
+    libdeflate_free_compressor(c);
+    return zn;
+}
+
 pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, pf_color color, int depth,
                     const pf_encode_options *opts, uint8_t **outp, size_t *outn) {
     pf_encode_options defo;
@@ -83,8 +124,9 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
                       (opts->preset == PF_PRESET_DEFAULT || opts->preset == PF_PRESET_BEST);
     int filter, level;
     switch (opts->preset) {
-    case PF_PRESET_FASTEST: filter = PF_FILTER_UP; level = PF_DEFLATE_PNGFAST_RLE; break;
-    case PF_PRESET_FAST: case PF_PRESET_DEFAULT: filter = PF_FILTER_ADAPTIVE; level = PF_DEFLATE_PNGFAST; break;
+    case PF_PRESET_FASTEST: filter = PF_FILTER_UP; level = PF_DEFLATE_PNGULTRA; break;
+    case PF_PRESET_FAST: filter = PF_FILTER_ADAPTIVE; level = PF_DEFLATE_PNGULTRA; break;
+    case PF_PRESET_DEFAULT: filter = PF_FILTER_ADAPTIVE; level = PF_DEFLATE_PNGFAST; break;
     case PF_PRESET_BEST: filter = PF_FILTER_ADAPTIVE; level = 10; break;
     default: return PF_ERR_ARGUMENT;
     }
@@ -94,9 +136,13 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
           level == PF_DEFLATE_PNGULTRA))
         return PF_ERR_ARGUMENT;
 
-    uint8_t *filt = pf__alloc(A, rawn + 64);
-    if (!filt) return PF_ERR_NOMEM;
-    pf__filter_image(filt, pixels, stride, h, rowbytes, bpp, filter);
+    const int stream = !probe && level == PF_DEFLATE_PNGULTRA;
+    uint8_t *filt = NULL;
+    if (!stream) {
+        filt = pf__alloc(A, rawn + 64);
+        if (!filt) return PF_ERR_NOMEM;
+        pf__filter_image(filt, pixels, stride, h, rowbytes, bpp, filter);
+    }
 
     /* worst-case bound over all compression levels */
     const size_t zcap = libdeflate_zlib_compress_bound(NULL, rawn);
@@ -118,7 +164,10 @@ pf_status pf_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, p
     uint8_t *z = nchunks == 1 ? p + 8 : out + cap - zcap - 12;
     pf_status st = PF_OK;
     size_t zn;
-    if (!probe) {
+    if (stream) {
+        zn = zcompress_ultra(pixels, stride, h, rowbytes, bpp, filter, opts->filter < 0 && !opts->deflate_level, z, zcap, A,
+                             &st);
+    } else if (!probe) {
         zn = zcompress(level, filt, rawn, z, zcap, &st);
     } else {
         /* 1. probe: adaptive filter + png-fast, written straight to the output */

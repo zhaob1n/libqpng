@@ -79,6 +79,28 @@ LIBDEFLATEAPI void
 libdeflate_set_png_min_match(struct libdeflate_compressor *compressor, unsigned min_len);
 
 /*
+ * png-ultra only: streaming use.  Only offset-1 runs are emitted, so the
+ * parser never needs more history than one byte, and the input can be fed in
+ * chunks (each chunk becomes one DEFLATE block, or stored blocks if smaller).
+ * Start with a zeroed state.  When state->has_prev is set (after the first
+ * chunk), in[-1] must be readable and hold the previous chunk's last byte.
+ * Returns the number of whole bytes written to 'out' (raw DEFLATE; leftover
+ * bits stay in the state until the final chunk), or 0 if 'out' is too small
+ * (each chunk needs at most in_nbytes + 5 * ceil(in_nbytes / 65535) + 2 bytes).
+ */
+struct libdeflate_png_ultra_state {
+	uint64_t bitbuf;
+	unsigned bitcount;
+	int has_prev;
+};
+LIBDEFLATEAPI size_t
+libdeflate_png_ultra_compress_chunk(struct libdeflate_compressor *compressor,
+				    struct libdeflate_png_ultra_state *state,
+				    const void *in, size_t in_nbytes,
+				    int is_final, void *out,
+				    size_t out_nbytes_avail);
+
+/*
  * Like libdeflate_alloc_compressor(), but adds the 'options' argument.
  */
 LIBDEFLATEAPI struct libdeflate_compressor *
