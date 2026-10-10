@@ -1,7 +1,8 @@
 # pngfast
 
 Fast, small PNG decoder and encoder in C11, built on a vendored and modified
-[libdeflate](https://github.com/ebiggers/libdeflate). Single header API, no other dependencies,
+[libdeflate](https://github.com/ebiggers/libdeflate), plus an optional vendored [zlib-ng](https://github.com/zlib-ng/zlib-ng)
+encoder backend for graphics. Single header API, no other dependencies,
 runtime CPU dispatch on x86-64 (SSE2 baseline, AVX2 / BMI2 / AVX-512 where available; never `-march=native`).
 Other architectures (or `-DPNGFAST_NO_SIMD`) build portable scalar kernels with identical output.
 
@@ -25,7 +26,8 @@ ctest --test-dir build              # api, conformance, roundtrip, fuzz smoke
 cmake --install build --prefix /usr/local   # installs pngfast.h, libpngfast, pngfast.pc, CMake package
 ```
 
-Options: `PNGFAST_BUILD_SHARED` (default OFF), `PNGFAST_BUILD_TESTS`, `PNGFAST_BUILD_TOOLS`,
+Options: `PNGFAST_WITH_ZLIBNG` (default ON when `third_party/zlib-ng` exists; OFF builds a libdeflate-only
+library with the pngfast 1.0 encoder policy), `PNGFAST_BUILD_SHARED` (default OFF), `PNGFAST_BUILD_TESTS`, `PNGFAST_BUILD_TOOLS`,
 `PNGFAST_SANITIZE` (ASan+UBSan), `PNGFAST_LIBFUZZER` (clang), `PNGFAST_CORPUS_DIR` (extra round-trip corpus).
 Consumers: `pkg-config --cflags --libs pngfast` or `find_package(pngfast)` + `pngfast::pngfast`.
 
@@ -50,6 +52,8 @@ pf_encode_options eopt;
 pf_encode_options_init(&eopt);
 eopt.preset = PF_PRESET_DEFAULT;          /* FASTEST, FAST, DEFAULT, BEST */
 /* optional: eopt.filter = PF_FILTER_PAETH; eopt.deflate_level = 9 (1..12, or PF_DEFLATE_PNGFAST*) */
+/* optional: eopt.backend = PF_BACKEND_ZLIBNG (or LIBDEFLATE; default AUTO); with ZLIBNG, deflate_level is a
+ * zlib-ng level 1..9 and eopt.zlib_strategy a PF_ZSTRATEGY_*; pf_backend_available() tells what is built in */
 /* palette images: eopt.palette = rgb_triplets; eopt.palette_entries = n; optional eopt.trns / trns_bytes */
 uint8_t *out; size_t out_size;
 s = pf_encode(pixels, width, height, 0 /* stride, 0 = packed */, PF_COLOR_RGBA, 8, &eopt, &out, &out_size);
@@ -71,8 +75,10 @@ what `PF_OUTPUT_RAW` decoding returns.
 | `src/unfilter.c` | scalar / SSE2 / AVX2 un-filter kernels, 2-row wavefronts, AVX2 quad-Paeth |
 | `src/expand.c` | output transforms (sub-byte unpack, palette / tRNS expansion, 16-bit swap) |
 | `src/filter_enc.c` | encoder filters + fused one-pass adaptive cost (SSE2/AVX2, portable scalar) |
-| `src/encode.c` | validation, presets / content probing, chunk writer |
+| `src/encode.c` | validation, presets / content probing, backend policy (`graphics_cfg` / `photo_cfg`), chunk writer |
+| `src/deflate_backend.{c,h}` | the encoder's only deflate interface: libdeflate (levels, png-fast, streamed png-ultra) and zlib-ng |
 | `src/common.c` | CPU dispatch, allocator hooks, status strings |
+| `third_party/zlib-ng` | optional, unmodified zlib-ng `develop` f18efb8, native `zng_*` API ([PNGFAST_VENDOR.md](third_party/zlib-ng/PNGFAST_VENDOR.md)) |
 | `third_party/libdeflate` | libdeflate v1.26 + pngfast changes ([PNGFAST_CHANGES.md](third_party/libdeflate/PNGFAST_CHANGES.md), [patch](third_party/libdeflate/pngfast-changes.patch)); symbols renamed `pf_libdeflate_*` |
 | `tests/` | conformance (vs png crate refs), round trips, API tests, data |
 | `fuzz/` | `fuzz_decode`, `fuzz_roundtrip` (libFuzzer / AFL++ / standalone mutation driver) |
@@ -86,8 +92,24 @@ what `PF_OUTPUT_RAW` decoding returns.
 |---|---|---|
 | FASTEST | Up filter + png-ultra (single pass, runs only, sampled per-block Huffman codes), streamed in L2-sized row chunks | png `Compression::Fastest` (Up + fdeflate UltraFast) |
 | FAST | adaptive filter (Up after strongly compressible chunks) + png-ultra, streamed | png `Fast` (Adaptive + UltraFast) |
-| DEFAULT | row-sample probe (1/6 of rows): photos -> adaptive + png-fast (palette: also Paeth; 16-bit: also L6); graphics -> Up-biased adaptive vs None chosen on the sample, then libdeflate L4-L8 with tuned search and minimum match 3 | png `Balanced` (Adaptive + flate2 L6, miniz_oxide or zlib-rs) |
-| BEST | same probe; photos: libdeflate L8; graphics: L9, or bounded near-optimal L10 (depth 48, nice 96) for alpha / 16-bit | png `High` (Adaptive + flate2 L9) |
+| DEFAULT | row-sample probe (1/6 of rows): photos -> adaptive + png-fast (palette: also Paeth; 16-bit: also libdeflate L6); graphics -> Up-biased adaptive vs None chosen on the sample, then **zlib-ng level 6** (without zlib-ng: libdeflate L4-L8 with tuned search and minimum match 3) | png `Balanced` (Adaptive + flate2 L6, miniz_oxide or zlib-rs) |
+| BEST | same probe; photos: libdeflate L8; graphics: **zlib-ng level 9, chain 1024** (without zlib-ng: libdeflate L9, or bounded near-optimal L10 for alpha / 16-bit) | png `High` (Adaptive + flate2 L9) |
+
+### Backends
+
+`pf_encode_options.backend`:
+
+| backend | what runs |
+|---|---|
+| `PF_BACKEND_AUTO` (default) | per preset and content (measured, see NOTES.md "Phase 4"): libdeflate png-ultra for FASTEST/FAST, png-fast / libdeflate L6-L8 for photos, zlib-ng L6 (DEFAULT) / L9 chain 1024 (BEST) for graphics. Without zlib-ng: same as LIBDEFLATE |
+| `PF_BACKEND_LIBDEFLATE` | libdeflate only: exactly the pngfast 1.0 output |
+| `PF_BACKEND_ZLIBNG` | every stream through zlib-ng (FASTEST L1 = deflate_quick, FAST L2, DEFAULT L6, BEST L9; filter probing unchanged); `deflate_level` 1..9 and `zlib_strategy` (FILTERED, HUFFMAN_ONLY, RLE) select explicitly. `PF_ERR_UNSUPPORTED` when not built in |
+
+Why two backends: libdeflate's PNG-specific single-pass compressors (png-ultra, png-fast) are unbeatable for speed
+and for photos, but on synthetic content (UI, text, alpha graphics, 16-bit) zlib's lazy parser and zlib-ng's
+deflate_medium find long far matches that libdeflate's L6-L9 miss; libdeflate needed its slow near-optimal
+parser to match zlib-9 sizes there. Decoding always uses the patched libdeflate (faster than zlib-ng inflate, see
+Results).
 
 The adaptive filter is the libpng "minimum sum of absolute signed residuals" heuristic over all five filters
 (the png crate's Adaptive omits None).
