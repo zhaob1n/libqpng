@@ -1,4 +1,5 @@
 //! rsref: reference + benchmark tool for the Rust side (png crate git, image-rs, fdeflate).
+//!   rsref apng in.png out.raw               image-rs composed APNG frames, RGBA8, concatenated
 //!   rsref decode MODE in.png out.raw         MODE = raw (png IDENTITY) | expand (png EXPAND) | imagers (image-rs)
 //!   rsref encode SPEC in.png out.png         SPEC = PRESET[:FILTER[:DEFLATE]] (see encode_png)
 //!   rsref bench-decode MODE REPS files...    CSV: tool,op,param,file,rep,width,height,ns,bytes
@@ -71,6 +72,23 @@ fn main() {
     let cmd = a[0].as_str();
     let tool = if cfg!(feature = "zlibrs") { "png-zlibrs" } else { "png" };
     match cmd {
+        "apng" => {
+            // all composed frames (image-rs ApngDecoder, RGBA8) concatenated; prints "frames w h" or "error"
+            use image::AnimationDecoder;
+            let d = std::fs::read(&a[1]).unwrap();
+            let r = image::codecs::png::PngDecoder::new(Cursor::new(&d)).and_then(|dec| dec.apng())
+                .and_then(|ap| ap.into_frames().collect_frames());
+            match r {
+                Ok(frames) => {
+                    let mut out = Vec::new();
+                    for f in &frames { out.extend_from_slice(f.buffer().as_raw()); }
+                    std::fs::write(&a[2], &out).unwrap();
+                    let (w, h) = frames.first().map(|f| f.buffer().dimensions()).unwrap_or((0, 0));
+                    println!("{} {w} {h}", frames.len());
+                }
+                Err(e) => println!("error {e}"),
+            }
+        }
         "decode" => { let d = std::fs::read(&a[2]).unwrap(); let (w, h, px) = decode_png(&d, &a[1]); std::fs::write(&a[3], &px).unwrap(); println!("{w} {h}"); }
         "encode" => { let d = std::fs::read(&a[2]).unwrap(); let s = load_src(&d); std::fs::write(&a[3], encode_png(&s, &a[1])).unwrap(); }
         "bench-decode" | "bench-encode" | "bench-deflate" | "bench-inflate" => {

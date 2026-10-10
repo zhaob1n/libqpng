@@ -38,6 +38,7 @@ const char *pf_status_string(pf_status s) {
     case PF_ERR_ENCODE: return "encoder failure";
     case PF_ERR_ABORTED: return "aborted by callback";
     case PF_ERR_STATE: return "invalid streaming state";
+    case PF_ERR_APNG: return "invalid APNG structure";
     case PF_MORE_DATA: return "more data needed";
     }
     return "unknown status";

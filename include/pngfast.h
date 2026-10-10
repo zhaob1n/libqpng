@@ -50,6 +50,7 @@ typedef enum {
     PF_ERR_ENCODE = -13,      /* internal encoder failure (should not happen) */
     PF_ERR_ABORTED = -14,     /* a user callback (rows, read, write) returned nonzero */
     PF_ERR_STATE = -15,       /* streaming call in the wrong state (e.g. finish before IEND, too many rows) */
+    PF_ERR_APNG = -16,        /* invalid APNG animation structure */
     PF_MORE_DATA = 1          /* streaming decode: not an error, more input is needed */
 } pf_status;
 
@@ -308,6 +309,51 @@ PF_API pf_status pf_encoder_push_rows(pf_encoder *enc, const void *rows, size_t 
 /* all rows must have been pushed; writes the remaining data and IEND */
 PF_API pf_status pf_encoder_finish(pf_encoder *enc);
 PF_API void pf_encoder_free(pf_encoder *enc);
+
+/* ---- APNG -----------------------------------------------------------------------------------------------------
+ * Decode: pf_apng_open() parses and validates the animation structure (acTL / fcTL / fdAT sequence numbers, frame
+ * count, regions) of a PNG in memory (the buffer must stay valid until pf_apng_free). A file without acTL (or with
+ * acTL after IDAT) opens as a still image with one frame. Invalid animation structure -> PF_ERR_APNG (browsers
+ * then show the default image: use pf_decode, which ignores APNG chunks).
+ *  - pf_apng_next_frame(): iterator over the composed frames: RGBA8 canvas (width*4 stride, owned by the decoder,
+ *    valid until the next call) after applying the previous frame's dispose op and this frame's blend op
+ *    (APNG spec / browser semantics: canvas starts transparent black, first frame DISPOSE_PREVIOUS acts as
+ *    BACKGROUND, BLEND_OVER is 8-bit "source over" with rounding, 16-bit samples are rounded to 8 bits).
+ *    pf_apng_rewind() restarts (for loops). Returns PF_ERR_STATE after the last frame.
+ *  - pf_apng_raw_frame(): one frame's own pixels (its fcTL size) in any pf_decode output layout, no composition.
+ * When the default image (IDAT) is not part of the animation it is not a frame (default_image_is_frame = 0). */
+typedef enum { PF_DISPOSE_NONE = 0, PF_DISPOSE_BACKGROUND = 1, PF_DISPOSE_PREVIOUS = 2 } pf_dispose_op;
+typedef enum { PF_BLEND_SOURCE = 0, PF_BLEND_OVER = 1 } pf_blend_op;
+typedef struct {
+    uint32_t width, height, x_offset, y_offset;
+    uint16_t delay_num, delay_den;   /* delay = num / den seconds (den 0 means 100) */
+    uint8_t dispose_op, blend_op;
+} pf_frame_info;
+typedef struct {
+    pf_info image;                   /* IHDR (canvas) */
+    uint32_t num_frames;             /* 1 for a still image */
+    uint32_t num_plays;              /* 0 = infinite */
+    int animated;                    /* acTL present and valid */
+    int default_image_is_frame;      /* IDAT is frame 0 */
+} pf_apng_info;
+typedef struct pf_apng pf_apng;
+PF_API pf_status pf_apng_open(const void *png, size_t size, const pf_decode_options *opts, pf_apng **apng);
+PF_API void pf_apng_get_info(const pf_apng *apng, pf_apng_info *info);
+PF_API pf_status pf_apng_next_frame(pf_apng *apng, const uint8_t **canvas_rgba8, pf_frame_info *frame);
+PF_API void pf_apng_rewind(pf_apng *apng);
+/* opts NULL = the options given to pf_apng_open */
+PF_API pf_status pf_apng_raw_frame(pf_apng *apng, uint32_t index, const pf_decode_options *opts, pf_image *img,
+                                   pf_frame_info *frame);
+PF_API void pf_apng_free(pf_apng *apng);
+
+/* Encode an APNG: every frame is pixels of its own fcTL size in pf_encode's layout (same color type / depth /
+ * palette for all), compressed with opts (preset, backend, ...); opts->metadata is written once. default_image
+ * NULL: frame 0 is the default image (must cover the canvas at offset 0); otherwise default_image (canvas size,
+ * default_stride) is a separate still image that is not part of the animation. */
+typedef struct { const void *pixels; size_t stride; pf_frame_info info; } pf_apng_frame;
+PF_API pf_status pf_encode_apng(uint32_t width, uint32_t height, pf_color color, int bit_depth, const pf_apng_frame *frames,
+                                uint32_t frame_count, uint32_t num_plays, const void *default_image, size_t default_stride,
+                                const pf_encode_options *opts, uint8_t **out, size_t *out_size);
 
 #ifdef __cplusplus
 }

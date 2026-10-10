@@ -214,3 +214,12 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
     push sizes == pf_decode; stream encode 4 presets x 3 backends with random row batches round trip; truncation,
     header-first, sticky CRC error, row/write callback abort, state errors. Bug found: libdeflate_crc32(crc, NULL, 0)
     returns 0 (IEND CRC) -> guarded.
+* Item 4b (APNG) DONE: src/apng.c. pf_apng_open (structure validation: acTL once and before IDAT, num_frames
+  1..2^31-1 == fcTL count, sequence numbers 0,1,2.. over fcTL+fdAT, every fcTL has data, default-image fcTL must
+  equal IHDR, regions inside the canvas; no acTL / acTL after IDAT -> still image), pf_apng_next_frame (RGBA8
+  canvas, dispose/blend per spec, first-frame PREVIOUS -> BACKGROUND, integer source-over with rounding),
+  pf_apng_rewind, pf_apng_raw_frame (any output layout), pf_encode_apng (pf_encode per frame, IDAT payload moved
+  into IDAT/fdAT, optional separate default image). Frames decoded through a synthetic PNG -> pf_decode (shared
+  paths). tests/test_apng.c: Philip Taylor's APNG suite (tests/data/apng, 61 files: final frame vs expectation,
+  invalid files rejected; 023 checked as raw 229,0,0 since "nearly black" needs gAMA), encode/decode round trip
+  vs float reference compositor (max diff <= 1), raw frames, every PngSuite still via the APNG API.
