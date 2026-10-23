@@ -371,3 +371,7 @@ Inflate (MB/s) incl. zlib-ng: libdeflate stays the decoder (patched pair decodin
 * Everything else: each pngfast preset is faster *and* smaller than its png counterpart with either flate2
   backend in every group (phase-3 losses on DEFAULT rgb8/16-bit and BEST alpha/16-bit are closed by zlib-ng).
 * Raw deflate on graphics: fdeflate UltraFast is still faster as a raw compressor (table above: 1041 vs 796 MB/s).
+
+## License
+
+MIT; see `LICENSE`. Bundled third-party code keeps its own license: `third_party/libdeflate` (MIT) and `third_party/zlib-ng` (zlib license).
