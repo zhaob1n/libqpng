@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Reproducible pngfast-vs-Rust benchmark driver.
+Reproducible qpng-vs-Rust benchmark driver.
 
   bench/run.py encode  [--rounds N] [--reps N] [--cpu C] [--configs a,b,..] [--out results.csv]
   bench/run.py decode  ...
-  bench/run.py deflate ...   (raw zlib streams: pngfast's libdeflate vs fdeflate)
+  bench/run.py deflate ...   (raw zlib streams: qpng's libdeflate vs fdeflate)
   bench/run.py inflate ...   (decompress PNG IDAT zlib streams made by several encoders)
 
 Method: checks box load first (refuses to start if the 1-min load average is
@@ -17,11 +17,11 @@ MB/s of *raw image bytes* (decoded size) plus compression ratio
 import argparse, collections, csv, io, os, re, statistics as st, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PFBENCH = os.environ.get("PFBENCH", os.path.join(ROOT, "build", "pfbench"))
+PFBENCH = os.environ.get("PFBENCH", os.path.join(ROOT, "build", "qpngbench"))
 RSREF = os.environ.get("RSREF", os.path.join(ROOT, "tools/rsref/target/release/rsref"))
 RSREF_Z = os.environ.get("RSREF_ZLIBRS", os.path.join(ROOT, "tools/rsref/target-zlibrs/release/rsref"))
-CORPUS = os.environ.get("PNGFAST_CORPUS", "/workspace/image-bench/png-next/images/formats")
-RAWDIR = os.environ.get("PNGFAST_RAW", "/workspace/deflate-bench/data")
+CORPUS = os.environ.get("QPNG_CORPUS", "/workspace/image-bench/png-next/images/formats")
+RAWDIR = os.environ.get("QPNG_RAW", "/workspace/deflate-bench/data")
 
 # label -> argv prefix (files appended).  {R} = reps.
 ENCODE = {
@@ -35,7 +35,7 @@ ENCODE = {
     "pf-fast":          [PFBENCH, "encode", "fast", "{R}"],
     "pf-default":       [PFBENCH, "encode", "default", "{R}"],
     "pf-best":          [PFBENCH, "encode", "best", "{R}"],
-    # backend forced (pf_encode_options.backend)
+    # backend forced (qpng_encode_options.backend)
     **{f"pf-{p}-{b}": [PFBENCH, "encode", f"{p}#{b}", "{R}"] for p in ("fastest", "fast", "default", "best")
        for b in ("ld", "zng")},
     # exploration
@@ -65,7 +65,7 @@ DEFLATE = {
 
 # optional (only via --configs): previous prototype, to check the cleaned-up decoder for regressions
 V3 = os.environ.get("PNGNEXT3", "/workspace/image-bench/png-next/bin/pngnext3")
-EXTRA_DECODE = {"v3-imagers": [V3, "v3", "decode-pngfast3", str(3 << 20), "{R}"]}
+EXTRA_DECODE = {"v3-imagers": [V3, "v3", "decode-qpng3", str(3 << 20), "{R}"]}
 
 INFLATE = {
     "fdeflate":        [RSREF, "bench-inflate", "-", "{R}"],
@@ -73,7 +73,7 @@ INFLATE = {
     "pf-pairs":        [PFBENCH, "inflate", "pairs", "{R}"],
     "zlib-ng":         [PFBENCH, "inflate", "zng", "{R}"],
 }
-STREAMS = os.environ.get("PNGFAST_STREAMS", "/workspace/deflate-bench/streams/png")
+STREAMS = os.environ.get("QPNG_STREAMS", "/workspace/deflate-bench/streams/png")
 
 FMT_GROUPS = [("rgb8", r"\.rgb8t?\."), ("rgba8", r"\.rgba8\."), ("ga8", r"\.ga8\."),
               ("g8", r"\.g8t?\."), ("p8", r"\.p8t?\."), ("sub8", r"\.(g|p)[124]\."),
@@ -124,7 +124,7 @@ def main():
     if a.mode == "decode":
         table = {**table, **EXTRA_DECODE}
     cfgs = [c for c in (a.configs.split(",") if a.configs else table if a.mode != "decode" else DECODE)]
-    # ad-hoc pfbench configs: "pfx=PARAM" (e.g. pfx=fast:5:9/4096/258)
+    # ad-hoc qpngbench configs: "pfx=PARAM" (e.g. pfx=fast:5:9/4096/258)
     table = {**table, **{c: [PFBENCH, a.mode, c[4:], "{R}"] for c in cfgs if c.startswith("pfx=")}}
     if a.mode == "inflate":
         files = sorted(f"{RAWDIR}/png/{f.split('.idat.')[0]}.idat:{STREAMS}/{f}" for f in os.listdir(STREAMS)

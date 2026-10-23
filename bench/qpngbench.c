@@ -1,10 +1,10 @@
-/* pfbench - pngfast side of the benchmark (bench/run.py drives this and tools/rsref).
- *   pfbench decode raw|expand|imagers REPS file.png...
- *   pfbench encode PRESET[:FILTER[:LEVEL]] REPS file.png...   (source decoded to raw untimed; same format re-encoded)
- *   pfbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh | ultra
- *   pfbench inflate stock|pairs|zng REPS orig:stream.zlib...   (zng: vendored zlib-ng, if built)
- *   PRESET suffixes (encode): "#ld" / "#zng" force the backend; "@B.L.D.N.M.S" sets PF_POLICY (final graphics
- *   stream: backend, level, depth, nice, minlen, strategy) in builds with -DPF_POLICY_OVERRIDE.
+/* qpngbench - qpng side of the benchmark (bench/run.py drives this and tools/rsref).
+ *   qpngbench decode raw|expand|imagers REPS file.png...
+ *   qpngbench encode PRESET[:FILTER[:LEVEL]] REPS file.png...   (source decoded to raw untimed; same format re-encoded)
+ *   qpngbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh | ultra
+ *   qpngbench inflate stock|pairs|zng REPS orig:stream.zlib...   (zng: vendored zlib-ng, if built)
+ *   PRESET suffixes (encode): "#ld" / "#zng" force the backend; "@B.L.D.N.M.S" sets QPNG_POLICY (final graphics
+ *   stream: backend, level, depth, nice, minlen, strategy) in builds with -DQPNG_POLICY_OVERRIDE.
  *   deflate LEVEL "zL" / "zLsS": zlib-ng level L (strategy S).
  * CSV: tool,op,param,file,rep,width,height,ns,bytes. Each timing covers setup + allocation + work; 1 warm-up rep.
  * DUMP_DIR=dir writes the last encoded PNG / compressed stream. */
@@ -13,9 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "pngfast.h"
-#include "pf_libdeflate.h"
-#ifdef PF_HAVE_ZLIBNG
+#include "qpng.h"
+#include "qpng_libdeflate.h"
+#ifdef QPNG_HAVE_ZLIBNG
 #  include <zlib-ng.h>
 #endif
 
@@ -42,8 +42,8 @@ static const unsigned char *find_chunk(const unsigned char *b, size_t n, const c
     return NULL;
 }
 static int parse_preset(const char *s) {
-    return !strncmp(s, "fastest", 7) ? PF_PRESET_FASTEST : !strncmp(s, "fast", 4) ? PF_PRESET_FAST :
-           !strncmp(s, "best", 4) ? PF_PRESET_BEST : PF_PRESET_DEFAULT;
+    return !strncmp(s, "fastest", 7) ? QPNG_PRESET_FASTEST : !strncmp(s, "fast", 4) ? QPNG_PRESET_FAST :
+           !strncmp(s, "best", 4) ? QPNG_PRESET_BEST : QPNG_PRESET_DEFAULT;
 }
 static unsigned g_depth, g_nice;   /* deflate op: LEVEL/DEPTH/NICE overrides the level's search params */
 static int deflate_level(const char *s) {
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
             for (int r = 0; r <= reps; r++) {
                 size_t got = 0; long long t0 = now_ns();
                 int rc;
-#ifdef PF_HAVE_ZLIBNG
+#ifdef QPNG_HAVE_ZLIBNG
                 if (!strcmp(param, "zng")) {
                     zng_stream z; memset(&z, 0, sizeof z);
                     zng_inflateInit(&z); z.next_in = st; z.avail_in = (uint32_t)sn; z.next_out = out; z.avail_out = (uint32_t)n;
@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
                 }
                 long long dt = now_ns() - t0;
                 if (rc || got != n || memcmp(out, orig, n)) { fprintf(stderr, "FAIL inflate %s\n", s); return 1; }
-                if (r) printf("pngfast,inflate,%s,%s,%d,0,0,%lld,%zu\n", param, o, r, dt, n);
+                if (r) printf("qpng,inflate,%s,%s,%d,0,0,%lld,%zu\n", param, o, r, dt, n);
             }
             free(orig); free(st); free(out); free(o); continue;
         }
@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
             for (int r = 0; r <= reps; r++) {
                 long long t0 = now_ns();
                 size_t m;
-#ifdef PF_HAVE_ZLIBNG
+#ifdef QPNG_HAVE_ZLIBNG
                 if (param[0] == 'z') {
                     const char *ss = strchr(param, 's');
                     unsigned long dl = (unsigned long)cap;
@@ -112,38 +112,38 @@ int main(int argc, char **argv) {
                 size_t got = 0; struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
                 if (!m || libdeflate_zlib_decompress(d, out, m, chk, n, &got) || got != n || memcmp(chk, buf, n)) { fprintf(stderr, "FAIL deflate %s\n", file); return 1; }
                 libdeflate_free_decompressor(d);
-                if (r == reps) { char tag[64]; snprintf(tag, sizeof tag, "pngfast-%s.zlib", param); dump(file, tag, out, m); }
-                if (r) printf("pngfast,deflate,%s,%s,%d,0,0,%lld,%zu\n", param, file, r, dt, m);
+                if (r == reps) { char tag[64]; snprintf(tag, sizeof tag, "qpng-%s.zlib", param); dump(file, tag, out, m); }
+                if (r) printf("qpng,deflate,%s,%s,%d,0,0,%lld,%zu\n", param, file, r, dt, m);
             }
             free(out); free(chk); free(buf); continue;
         }
         if (!strcmp(op, "decode")) {
-            pf_decode_options o; pf_decode_options_init(&o);
-            o.output = !strcmp(param, "expand") ? PF_OUTPUT_EXPAND : !strcmp(param, "imagers") ? PF_OUTPUT_IMAGERS : PF_OUTPUT_RAW;
+            qpng_decode_options o; qpng_decode_options_init(&o);
+            o.output = !strcmp(param, "expand") ? QPNG_OUTPUT_EXPAND : !strcmp(param, "imagers") ? QPNG_OUTPUT_IMAGERS : QPNG_OUTPUT_RAW;
             for (int r = 0; r <= reps; r++) {
-                pf_image im; long long t0 = now_ns();
-                pf_status s = pf_decode(buf, n, &o, &im);
+                qpng_image im; long long t0 = now_ns();
+                qpng_status s = qpng_decode(buf, n, &o, &im);
                 long long dt = now_ns() - t0;
-                if (s) { fprintf(stderr, "FAIL decode %s: %s\n", file, pf_status_string(s)); return 1; }
-                if (r == reps) dump(file, "pngfast.raw", im.pixels, im.size);
-                if (r) printf("pngfast,decode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, im.size);
-                pf_image_free(&im);
+                if (s) { fprintf(stderr, "FAIL decode %s: %s\n", file, qpng_status_string(s)); return 1; }
+                if (r == reps) dump(file, "qpng.raw", im.pixels, im.size);
+                if (r) printf("qpng,decode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, im.size);
+                qpng_image_free(&im);
             }
             free(buf); continue;
         }
         if (!strcmp(op, "encode")) {
-            pf_image im; pf_status s = pf_decode(buf, n, NULL, &im);
+            qpng_image im; qpng_status s = qpng_decode(buf, n, NULL, &im);
             if (s) { fprintf(stderr, "FAIL source decode %s\n", file); return 1; }
-            pf_encode_options o; pf_encode_options_init(&o);
+            qpng_encode_options o; qpng_encode_options_init(&o);
             o.preset = parse_preset(param);
-            if (strstr(param, "#zng")) o.backend = PF_BACKEND_ZLIBNG;
-            if (strstr(param, "#ld")) o.backend = PF_BACKEND_LIBDEFLATE;
+            if (strstr(param, "#zng")) o.backend = QPNG_BACKEND_ZLIBNG;
+            if (strstr(param, "#ld")) o.backend = QPNG_BACKEND_LIBDEFLATE;
             const char *pol = strchr(param, '@');
             if (pol) {   /* "@B.L.D.N.M.S" (dots: run.py splits configs on commas) */
                 char e[64]; snprintf(e, sizeof e, "%s", pol + 1);
                 for (char *q = e; *q; q++) if (*q == '.') *q = ':';
-                setenv("PF_POLICY", e, 1);
-            } else unsetenv("PF_POLICY");
+                setenv("QPNG_POLICY", e, 1);
+            } else unsetenv("QPNG_POLICY");
             char pp[128]; snprintf(pp, sizeof pp, "%s", param); pp[strcspn(pp, "@#")] = 0;
             const char *c1 = strchr(pp, ':');
             if (c1) { o.filter = atoi(c1 + 1); const char *c2 = strchr(c1 + 1, ':'); if (c2) { o.deflate_level = deflate_level(c2 + 1) < 0 ? 100 - deflate_level(c2 + 1) : deflate_level(c2 + 1);
@@ -153,14 +153,14 @@ int main(int argc, char **argv) {
             o.trns = find_chunk(buf, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;
             for (int r = 0; r <= reps; r++) {
                 uint8_t *png; size_t pn; long long t0 = now_ns();
-                s = pf_encode(im.pixels, im.width, im.height, im.stride, (pf_color)im.color_type, im.bit_depth, &o, &png, &pn);
+                s = qpng_encode(im.pixels, im.width, im.height, im.stride, (qpng_color)im.color_type, im.bit_depth, &o, &png, &pn);
                 long long dt = now_ns() - t0;
-                if (s) { fprintf(stderr, "FAIL encode %s: %s\n", file, pf_status_string(s)); return 1; }
-                if (r == reps) { char tag[96]; snprintf(tag, sizeof tag, "pngfast-%s.png", param); dump(file, tag, png, pn); }
-                if (r) printf("pngfast,encode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, pn);
-                pf_buffer_free(png, NULL);
+                if (s) { fprintf(stderr, "FAIL encode %s: %s\n", file, qpng_status_string(s)); return 1; }
+                if (r == reps) { char tag[96]; snprintf(tag, sizeof tag, "qpng-%s.png", param); dump(file, tag, png, pn); }
+                if (r) printf("qpng,encode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, pn);
+                qpng_buffer_free(png, NULL);
             }
-            pf_image_free(&im); free(buf); continue;
+            qpng_image_free(&im); free(buf); continue;
         }
         fprintf(stderr, "unknown op %s\n", op); return 2;
     }

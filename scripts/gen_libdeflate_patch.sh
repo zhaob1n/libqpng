@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regenerate third_party/libdeflate/pngfast-changes.patch against upstream libdeflate v1.26.
+# Regenerate third_party/libdeflate/qpng-changes.patch against upstream libdeflate v1.26.
 #   scripts/gen_libdeflate_patch.sh [UPSTREAM_GIT_DIR]   (default: clones https://github.com/ebiggers/libdeflate)
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,5 +12,5 @@ for f in libdeflate.h lib/deflate_compress.c lib/deflate_decompress.c lib/decomp
   git -C "$UP" show v1.26:"$f" > "$T/a/$f"
   cp "$V/$f" "$T/b/$f"
 done
-(cd "$T" && diff -ru a b > "$V/pngfast-changes.patch") || true
-echo "wrote $V/pngfast-changes.patch"
+(cd "$T" && diff -ru a b > "$V/qpng-changes.patch") || true
+echo "wrote $V/qpng-changes.patch"

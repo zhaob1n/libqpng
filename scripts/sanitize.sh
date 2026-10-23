@@ -9,24 +9,24 @@ SECS=${2:-60}
 CC=${CC:-cc}
 B=$ROOT/build-asan
 cmake -S "$ROOT" -B "$B" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER="$CC" \
-      -DPNGFAST_SANITIZE=ON -DPNGFAST_BUILD_TESTS=ON >/dev/null
+      -DQPNG_SANITIZE=ON -DQPNG_BUILD_TESTS=ON >/dev/null
 cmake --build "$B" -j"${JOBS:-4}"
 export ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
 (cd "$B" && ctest --output-on-failure)
-echo "== portable scalar build (-DPNGFAST_NO_SIMD) without zlib-ng, sanitized"
+echo "== portable scalar build (-DQPNG_NO_SIMD) without zlib-ng, sanitized"
 P=$ROOT/build-asan-portable
-cmake -S "$ROOT" -B "$P" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER="$CC" -DCMAKE_C_FLAGS=-DPNGFAST_NO_SIMD \
-      -DPNGFAST_WITH_ZLIBNG=OFF -DPNGFAST_SANITIZE=ON -DPNGFAST_BUILD_TESTS=ON >/dev/null
+cmake -S "$ROOT" -B "$P" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER="$CC" -DCMAKE_C_FLAGS=-DQPNG_NO_SIMD \
+      -DQPNG_WITH_ZLIBNG=OFF -DQPNG_SANITIZE=ON -DQPNG_BUILD_TESTS=ON >/dev/null
 cmake --build "$P" -j"${JOBS:-4}"
 (cd "$P" && ctest --output-on-failure)
 SEEDS=$(ls "$ROOT"/tests/data/pngsuite/*.png "$ROOT"/tests/data/formats_small/*.png)
 echo "== mutation fuzzing: $ITERS mutations per seed"
-PF_FUZZ_ITERS=$ITERS "$B/fuzz_decode" $SEEDS
-PF_FUZZ_ITERS=$((ITERS / 10)) "$B/fuzz_roundtrip" $SEEDS
+QPNG_FUZZ_ITERS=$ITERS "$B/fuzz_decode" $SEEDS
+QPNG_FUZZ_ITERS=$((ITERS / 10)) "$B/fuzz_roundtrip" $SEEDS
 if command -v clang >/dev/null 2>&1; then
   L=$ROOT/build-libfuzzer
   cmake -S "$ROOT" -B "$L" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang \
-        -DPNGFAST_SANITIZE=ON -DPNGFAST_LIBFUZZER=ON -DPNGFAST_BUILD_TESTS=OFF >/dev/null
+        -DQPNG_SANITIZE=ON -DQPNG_LIBFUZZER=ON -DQPNG_BUILD_TESTS=OFF >/dev/null
   cmake --build "$L" -j"${JOBS:-4}"
   mkdir -p "$L/corpus_decode" "$L/corpus_rt"
   "$L/libfuzzer_decode" -max_total_time="$SECS" "$L/corpus_decode" "$ROOT/tests/data/pngsuite"
@@ -36,7 +36,7 @@ else
 fi
 echo "== shared library: exported symbols"
 S=$ROOT/build-shared
-cmake -S "$ROOT" -B "$S" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DPNGFAST_BUILD_SHARED=ON >/dev/null
+cmake -S "$ROOT" -B "$S" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DQPNG_BUILD_SHARED=ON >/dev/null
 cmake --build "$S" -j"${JOBS:-4}"
 (cd "$S" && ctest --output-on-failure -R "symbols|api|roundtrip$")
 echo "sanitize: OK"

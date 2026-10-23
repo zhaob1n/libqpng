@@ -469,7 +469,7 @@ struct libdeflate_compressor {
 	/* png-fast (deflate_compress_png_fast) parameters */
 	u32 png_block_len;	/* soft maximum block length */
 	u32 png_skip_shift;	/* literal skip-ahead: step += (ip - lit_start) >> shift */
-	u32 fixed_min_len;	/* pngfast: 0 = adaptive minimum match length, else fixed (levels 2-12) */
+	u32 fixed_min_len;	/* qpng: 0 = adaptive minimum match length, else fixed (levels 2-12) */
 	u32 png_min_hash_len;	/* hashed matches: 8 (64-bit compare) */
 	u32 png_short_base;	/* short (< 8) matches must beat (base + log2 dist) bits */
 

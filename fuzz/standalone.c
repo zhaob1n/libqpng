@@ -1,7 +1,7 @@
 /* standalone.c - driver for non-libFuzzer builds (AFL++, plain replay, CI):
  *   prog FILE...      run the target on each file
  *   prog              read one input from stdin (AFL: afl-fuzz -i seeds -o out -- ./prog)
- *   PF_FUZZ_ITERS=N prog FILE...   additionally run N random mutations of each file (cheap smoke fuzzing) */
+ *   QPNG_FUZZ_ITERS=N prog FILE...   additionally run N random mutations of each file (cheap smoke fuzzing) */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
         if (b) { LLVMFuzzerTestOneInput(b, n); free(b); }
         return 0;
     }
-    long iters = getenv("PF_FUZZ_ITERS") ? atol(getenv("PF_FUZZ_ITERS")) : 0;
+    long iters = getenv("QPNG_FUZZ_ITERS") ? atol(getenv("QPNG_FUZZ_ITERS")) : 0;
     for (int i = 1; i < argc; i++) {
         FILE *f = fopen(argv[i], "rb");
         if (!f) { perror(argv[i]); return 1; }

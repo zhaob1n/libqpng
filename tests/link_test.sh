@@ -1,8 +1,8 @@
 #!/bin/sh
-# Link test: libpngfast.a together with stock static zlib-ng (native zng_* API), zlib-compat zlib-ng and libdeflate
-# (built once from the vendored sources without pngfast's renaming, i.e. upstream symbol names) must link without
+# Link test: libqpng.a together with stock static zlib-ng (native zng_* API), zlib-compat zlib-ng and libdeflate
+# (built once from the vendored sources without qpng's renaming, i.e. upstream symbol names) must link without
 # duplicate symbols, and both sides must work.
-#   tests/link_test.sh LIBPNGFAST.a SOURCE_ROOT WORKDIR CC
+#   tests/link_test.sh LIBQPNG.a SOURCE_ROOT WORKDIR CC
 set -eu
 LIB=$1; ROOT=$2; W=$3; CC=$4
 mkdir -p "$W"
@@ -26,6 +26,6 @@ fi
       "$ROOT/tests/link_test.c" "$LIB" "$W/zng/libz-ng.a" "$W/libdeflate.a" -o "$W/link_test" -lm
 "$W/link_test"
 # zlib-compat flavour (deflate_medium, crc32_* ... with plain zlib names)
-"$CC" -O2 -I"$ROOT/include" -I"$W/zcompat" -DPF_LINK_ZLIB_COMPAT "$ROOT/tests/link_test.c" "$LIB" \
+"$CC" -O2 -I"$ROOT/include" -I"$W/zcompat" -DQPNG_LINK_ZLIB_COMPAT "$ROOT/tests/link_test.c" "$LIB" \
       "$W/zcompat/libz.a" -o "$W/link_test_compat" -lm
 "$W/link_test_compat"

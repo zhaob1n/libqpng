@@ -2,8 +2,8 @@ prefix=@CMAKE_INSTALL_PREFIX@
 libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
 includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 
-Name: pngfast
+Name: qpng
 Description: Fast PNG decoder/encoder (bundles a modified libdeflate)
 Version: @PROJECT_VERSION@
-Libs: -L${libdir} -lpngfast
+Libs: -L${libdir} -lqpng
 Cflags: -I${includedir}

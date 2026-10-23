@@ -1,6 +1,6 @@
 #!/bin/sh
-# Fail if a pngfast library exports any symbol outside the public API (include/pngfast.h, PF_API).
-#   scripts/check_symbols.sh EXPORTS_FILE LIB...      (EXPORTS_FILE: build dir pngfast.exports, one name per line)
+# Fail if a qpng library exports any symbol outside the public API (include/qpng.h, QPNG_API).
+#   scripts/check_symbols.sh EXPORTS_FILE LIB...      (EXPORTS_FILE: build dir qpng.exports, one name per line)
 # Static archives: defined global symbols of every member; shared objects: the dynamic symbol table.
 set -eu
 EXPORTS=$1; shift

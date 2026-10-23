@@ -1,11 +1,11 @@
 /* Round trip: decode (raw) -> encode with every preset and every fixed filter -> decode -> identical samples.
  * Covers every color type / bit depth in the corpus (palette with PLTE/tRNS carried over). */
-#include "pngfast.h"
+#include "qpng.h"
 #include "test_util.h"
-#ifdef PNGFAST_TEST_ZLIB
+#ifdef QPNG_TEST_ZLIB
 #include <zlib.h>
 /* the IDAT stream must also inflate with stock zlib, to h * (1 + rowbytes) bytes */
-static int zlib_ok(const uint8_t *png, size_t pn, const pf_image *im) {
+static int zlib_ok(const uint8_t *png, size_t pn, const qpng_image *im) {
     static const int ch[7] = { 1, 0, 3, 1, 2, 0, 4 };
     const size_t raw = (size_t)im->height * (1 + ((size_t)im->width * ch[im->color_type] * im->bit_depth + 7) / 8);
     z_stream s; memset(&s, 0, sizeof s);
@@ -26,7 +26,7 @@ static int zlib_ok(const uint8_t *png, size_t pn, const pf_image *im) {
     return ok;
 }
 #else
-static int zlib_ok(const uint8_t *png, size_t pn, const pf_image *im) { (void)png; (void)pn; (void)im; return 1; }
+static int zlib_ok(const uint8_t *png, size_t pn, const qpng_image *im) { (void)png; (void)pn; (void)im; return 1; }
 #endif
 
 int main(int argc, char **argv) {
@@ -34,44 +34,44 @@ int main(int argc, char **argv) {
     for (int fi = 1; fi < argc; fi++) {
         size_t n; unsigned char *buf = slurp(argv[fi], &n);
         if (!buf) { fprintf(stderr, "missing %s\n", argv[fi]); fails++; continue; }
-        pf_image src; if (pf_decode(buf, n, NULL, &src)) { free(buf); continue; }   /* invalid inputs are skipped */
-        pf_encode_options o; pf_encode_options_init(&o);
+        qpng_image src; if (qpng_decode(buf, n, NULL, &src)) { free(buf); continue; }   /* invalid inputs are skipped */
+        qpng_encode_options o; qpng_encode_options_init(&o);
         int pl = 0, tl = 0;
         o.palette = find_chunk(buf, n, "PLTE", &pl); o.palette_entries = o.palette ? pl / 3 : 0;
         o.trns = find_chunk(buf, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;
-        if (src.color_type != PF_COLOR_PALETTE) { o.palette = NULL; o.palette_entries = 0; }   /* suggested PLTE (e.g. ps1n0g08) */
-        if (o.trns && ((src.color_type == PF_COLOR_GRAY && tl != 2) || (src.color_type == PF_COLOR_RGB && tl != 6) ||
-                       (src.color_type == PF_COLOR_PALETTE && tl > o.palette_entries) || src.color_type == PF_COLOR_RGBA ||
-                       src.color_type == PF_COLOR_GRAY_ALPHA)) { o.trns = NULL; o.trns_bytes = 0; }
+        if (src.color_type != QPNG_COLOR_PALETTE) { o.palette = NULL; o.palette_entries = 0; }   /* suggested PLTE (e.g. ps1n0g08) */
+        if (o.trns && ((src.color_type == QPNG_COLOR_GRAY && tl != 2) || (src.color_type == QPNG_COLOR_RGB && tl != 6) ||
+                       (src.color_type == QPNG_COLOR_PALETTE && tl > o.palette_entries) || src.color_type == QPNG_COLOR_RGBA ||
+                       src.color_type == QPNG_COLOR_GRAY_ALPHA)) { o.trns = NULL; o.trns_bytes = 0; }
         /* variants: 4 presets (AUTO backend), 6 fixed filters, 4 libdeflate levels, 4 presets forced to libdeflate,
          * then (if built) 4 presets forced to zlib-ng and 5 explicit zlib-ng level / strategy combinations */
-        const int nv = 4 + 6 + 4 + 4 + (pf_backend_available(PF_BACKEND_ZLIBNG) ? 4 + 5 : 0);
+        const int nv = 4 + 6 + 4 + 4 + (qpng_backend_available(QPNG_BACKEND_ZLIBNG) ? 4 + 5 : 0);
         for (int v = 0; v < nv; v++) {
-            pf_encode_options e = o;
-            if (v < 4) e.preset = (pf_preset)v;
-            else if (v < 10) { e.preset = PF_PRESET_FAST; e.filter = v - 4; }
-            else if (v < 14) e.deflate_level = (int[]){ PF_DEFLATE_PNGFAST_RLE, PF_DEFLATE_PNGFAST_HIGH, 1, PF_DEFLATE_PNGULTRA }[v - 10];
-            else if (v < 18) { e.preset = (pf_preset)(v - 14); e.backend = PF_BACKEND_LIBDEFLATE; }
-            else if (v < 22) { e.preset = (pf_preset)(v - 18); e.backend = PF_BACKEND_ZLIBNG; }
+            qpng_encode_options e = o;
+            if (v < 4) e.preset = (qpng_preset)v;
+            else if (v < 10) { e.preset = QPNG_PRESET_FAST; e.filter = v - 4; }
+            else if (v < 14) e.deflate_level = (int[]){ QPNG_DEFLATE_QPNG_RLE, QPNG_DEFLATE_QPNG_HIGH, 1, QPNG_DEFLATE_PNGULTRA }[v - 10];
+            else if (v < 18) { e.preset = (qpng_preset)(v - 14); e.backend = QPNG_BACKEND_LIBDEFLATE; }
+            else if (v < 22) { e.preset = (qpng_preset)(v - 18); e.backend = QPNG_BACKEND_ZLIBNG; }
             else {
-                static const int zl[5][2] = { { 1, PF_ZSTRATEGY_DEFAULT }, { 4, PF_ZSTRATEGY_FILTERED },
-                                              { 9, PF_ZSTRATEGY_DEFAULT }, { 6, PF_ZSTRATEGY_RLE }, { 3, PF_ZSTRATEGY_HUFFMAN_ONLY } };
-                e.backend = PF_BACKEND_ZLIBNG; e.deflate_level = zl[v - 22][0]; e.zlib_strategy = zl[v - 22][1];
-                e.filter = v & 1 ? PF_FILTER_ADAPTIVE : PF_FILTER_PAETH;
+                static const int zl[5][2] = { { 1, QPNG_ZSTRATEGY_DEFAULT }, { 4, QPNG_ZSTRATEGY_FILTERED },
+                                              { 9, QPNG_ZSTRATEGY_DEFAULT }, { 6, QPNG_ZSTRATEGY_RLE }, { 3, QPNG_ZSTRATEGY_HUFFMAN_ONLY } };
+                e.backend = QPNG_BACKEND_ZLIBNG; e.deflate_level = zl[v - 22][0]; e.zlib_strategy = zl[v - 22][1];
+                e.filter = v & 1 ? QPNG_FILTER_ADAPTIVE : QPNG_FILTER_PAETH;
             }
             uint8_t *png; size_t pn;
-            pf_status s = pf_encode(src.pixels, src.width, src.height, src.stride, (pf_color)src.color_type, src.bit_depth, &e, &png, &pn);
+            qpng_status s = qpng_encode(src.pixels, src.width, src.height, src.stride, (qpng_color)src.color_type, src.bit_depth, &e, &png, &pn);
             runs++;
-            if (s) { fprintf(stderr, "encode %s v%d: %s\n", argv[fi], v, pf_status_string(s)); fails++; continue; }
+            if (s) { fprintf(stderr, "encode %s v%d: %s\n", argv[fi], v, qpng_status_string(s)); fails++; continue; }
             if (!zlib_ok(png, pn, &src)) { fprintf(stderr, "ZLIB REJECTS %s variant %d\n", argv[fi], v); fails++; }
-            pf_image back; s = pf_decode(png, pn, NULL, &back);
+            qpng_image back; s = qpng_decode(png, pn, NULL, &back);
             if (s || back.size != src.size || back.width != src.width || back.color_type != src.color_type ||
                 back.bit_depth != src.bit_depth || memcmp(back.pixels, src.pixels, src.size)) {
-                fprintf(stderr, "ROUNDTRIP MISMATCH %s variant %d (%s)\n", argv[fi], v, s ? pf_status_string(s) : "pixels"); fails++;
+                fprintf(stderr, "ROUNDTRIP MISMATCH %s variant %d (%s)\n", argv[fi], v, s ? qpng_status_string(s) : "pixels"); fails++;
             }
-            pf_image_free(&back); pf_buffer_free(png, NULL);
+            qpng_image_free(&back); qpng_buffer_free(png, NULL);
         }
-        pf_image_free(&src); free(buf);
+        qpng_image_free(&src); free(buf);
     }
     printf("roundtrip: %d encodes, %d failures\n", runs, fails);
     return fails != 0;

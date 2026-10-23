@@ -116,7 +116,7 @@ diff -ru a/lib/deflate_compress.c b/lib/deflate_compress.c
 +	/* png-fast (deflate_compress_png_fast) parameters */
 +	u32 png_block_len;	/* soft maximum block length */
 +	u32 png_skip_shift;	/* literal skip-ahead: step += (ip - lit_start) >> shift */
-+	u32 fixed_min_len;	/* pngfast: 0 = adaptive minimum match length, else fixed (levels 2-12) */
++	u32 fixed_min_len;	/* qpng: 0 = adaptive minimum match length, else fixed (levels 2-12) */
 +	u32 png_min_hash_len;	/* hashed matches: 8 (64-bit compare) */
 +	u32 png_short_base;	/* short (< 8) matches must beat (base + log2 dist) bits */
 +
@@ -1164,7 +1164,7 @@ diff -ru a/libdeflate.h b/libdeflate.h
 + * Levels 2-12: fixed minimum match length (3..9) instead of the heuristic that
 + * raises it when few distinct literals are in use (0 restores the heuristic).
 + * Filtered PNG graphics use few literal values yet profit from short matches:
-+ * min 3 is 1.5% smaller and slightly faster on pngfast's graphics corpus.
++ * min 3 is 1.5% smaller and slightly faster on qpng's graphics corpus.
 + */
 +LIBDEFLATEAPI void
 +libdeflate_set_min_match_len(struct libdeflate_compressor *compressor,

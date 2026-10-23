@@ -9,7 +9,7 @@
 #include "internal.h"
 
 /* ---- predictors on 16 / 32 independent bytes ---- */
-#if PF_X86
+#if QPNG_X86
 static inline __m128i paeth_v16(__m128i a, __m128i b, __m128i c) {
     const __m128i z = _mm_setzero_si128();
     __m128i r[2];
@@ -54,7 +54,7 @@ static inline int pred_scalar(int f, int a, int b, int c) {
 static inline int absres(int r) { int v = (int8_t)r; return v < 0 ? -v : v; }
 
 /* ---- portable scalar versions (same results) ---- */
-#if !PF_X86
+#if !QPNG_X86
 static void filt_row_scalar(int f, uint8_t *out, const uint8_t *cur, const uint8_t *prev, size_t n, int bpp) {
     size_t i = 0;
     if (f == 0) { memcpy(out, cur, n); return; }
@@ -72,7 +72,7 @@ static void costs_scalar(const uint8_t *cur, const uint8_t *prev, size_t n, int 
 }
 #endif
 
-#if PF_X86
+#if QPNG_X86
 /* ---- write one filtered row ---- */
 static void filt_row_sse2(int f, uint8_t *out, const uint8_t *cur, const uint8_t *prev, size_t n, int bpp) {
     size_t i = 0;
@@ -172,16 +172,16 @@ __attribute__((target("avx2"))) static void costs5_avx2(const uint8_t *cur, cons
                                                         uint64_t cost[5]) {
     costs_avx2(cur, prev, n, bpp, cost, 1);
 }
-#endif /* PF_X86 */
+#endif /* QPNG_X86 */
 
-void pf__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int mode) {
-    pf__filter_rows(dst, px, stride, 0, h, n, bpp, mode);
+void qpng__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int mode) {
+    qpng__filter_rows(dst, px, stride, 0, h, n, bpp, mode);
 }
 
-void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0, uint32_t y1, size_t n, int bpp,
+void qpng__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0, uint32_t y1, size_t n, int bpp,
                      int mode) {
-#if PF_X86
-    const int avx2 = pf__have_avx2();
+#if QPNG_X86
+    const int avx2 = qpng__have_avx2();
 #endif
     uint8_t zrow_small[4096 + 64];
     /* the all-zero predecessor of row 0 (only needed if row 0 is in range) */
@@ -195,24 +195,24 @@ void pf__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0
         const uint8_t *cur = px + (size_t)y * stride, *prev = y ? cur - stride : zrow;
         uint8_t *o = dst + (size_t)(y - y0) * (n + 1);
         int f = mode;
-        if (mode == PF_FILTER_ADAPTIVE || mode == PF__FILTER_ADAPTIVE_GFX || mode == PF__FILTER_ADAPTIVE_FLAT) {
+        if (mode == QPNG_FILTER_ADAPTIVE || mode == QPNG__FILTER_ADAPTIVE_GFX || mode == QPNG__FILTER_ADAPTIVE_FLAT) {
             uint64_t cost[5];
-#if PF_X86
-            if (mode == PF__FILTER_ADAPTIVE_FLAT)
+#if QPNG_X86
+            if (mode == QPNG__FILTER_ADAPTIVE_FLAT)
                 (avx2 ? costs4_avx2 : costs4_sse2)(cur, prev, n, bpp, cost);
             else
                 (avx2 ? costs5_avx2 : costs5_sse2)(cur, prev, n, bpp, cost);
 #else
-            costs_scalar(cur, prev, n, bpp, cost, mode != PF__FILTER_ADAPTIVE_FLAT);
+            costs_scalar(cur, prev, n, bpp, cost, mode != QPNG__FILTER_ADAPTIVE_FLAT);
 #endif
             f = 0;
             for (int k = 1; k < 5; k++) if (cost[k] < cost[f]) f = k;
             /* graphics: Up whenever it is within 2x of the best residual sum (repeated rows / zero runs
              * matter more to LZ than small residuals; -3..6% on screenshots, worse on photos) */
-            if (mode != PF_FILTER_ADAPTIVE && cost[PF_FILTER_UP] <= 2 * cost[f]) f = PF_FILTER_UP;
+            if (mode != QPNG_FILTER_ADAPTIVE && cost[QPNG_FILTER_UP] <= 2 * cost[f]) f = QPNG_FILTER_UP;
         }
         o[0] = (uint8_t)f;
-#if PF_X86
+#if QPNG_X86
         if (avx2) filt_row_avx2(f, o + 1, cur, prev, n, bpp); else filt_row_sse2(f, o + 1, cur, prev, n, bpp);
 #else
         filt_row_scalar(f, o + 1, cur, prev, n, bpp);

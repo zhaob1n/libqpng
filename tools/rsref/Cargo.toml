@@ -3,7 +3,7 @@ name = "rsref"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Rust-side reference + benchmark tool for pngfast: png crate (git), image-rs, fdeflate"
+description = "Rust-side reference + benchmark tool for qpng: png crate (git), image-rs, fdeflate"
 
 [dependencies]
 png = { path = "/workspace/image-bench/src/image-png" }

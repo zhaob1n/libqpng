@@ -1,20 +1,20 @@
-# pngfast engineering notes (progress log)
+# qpng engineering notes (progress log)
 
 Box is shared with other agents: all headline numbers are taken with `bench/run.py` (load check, `taskset -c 3`,
 rotating config order per round, per-file medians). Times are CST.
 
 ## 2026-10-09 21:16  phase start: project structure
-* Repo `/workspace/pngfast`: `include/pngfast.h` (stable API), `src/{common,decode,unfilter,expand,filter_enc,encode}.c`,
-  vendored modified libdeflate (`third_party/libdeflate`, symbols renamed `pf_libdeflate_*`), CMake + pkg-config,
+* Repo `libqpng`: `include/qpng.h` (stable API), `src/{common,decode,unfilter,expand,filter_enc,encode}.c`,
+  vendored modified libdeflate (`third_party/libdeflate`, symbols renamed `qpng_libdeflate_*`), CMake + pkg-config,
   CLI, bench tool, Rust reference tool (`tools/rsref`), tests (PngSuite + 40-file format corpus vs png crate
   references, round trips, API/limits/allocator), fuzz targets, sanitizer script.
 * Decoder ported from png-next v3 unchanged in substance. Dropped experimental switches that measured no gain:
-  PF2_HUGE (hugepages), PF2_NO_FUSE, PF_NO_WAVEFRONT, PF_SCALAR, PF2_NO_QUAD, PF2_QUAD_ALL, PF3_NO_PAIRS12, the
+  PF2_HUGE (hugepages), PF2_NO_FUSE, QPNG_NO_WAVEFRONT, QPNG_SCALAR, PF2_NO_QUAD, PF2_QUAD_ALL, PF3_NO_PAIRS12, the
   generic (non-3/4 bpp) quad-Paeth kernel and the `flags` argument of unfilter_row.
 * New check: IDAT chunks must be consecutive (spec; png crate also rejects).
 
 ## Why png-fast deflate (581 MB/s raw) did not make end-to-end encode much faster
-Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 20 encodes, 113 MB raw):
+Instrumented old encoder (qpng3_enc), photo rgb8 (kodim01/03/05 + cathedral, 20 encodes, 113 MB raw):
 
 | stage | adaptive filter | Paeth only |
 |---|---|---|
@@ -53,7 +53,7 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   (129-149 vs 265-330 MB/s). Cause: hashed matches on filtered photos are short and frequent (ga8: 711K
   matches of ~8.7 bytes in 12 MB), each resets the skip-ahead. Adaptive filter + run-only parsing was
   *smaller and 2-3.5x faster* on every 8-bit photo group (only 16-bit lost 4%).
-  -> png-fast now adapts per block (see third_party/libdeflate/PNGFAST_CHANGES.md "adaptive hashing").
+  -> png-fast now adapts per block (see third_party/libdeflate/QPNG_CHANGES.md "adaptive hashing").
   First attempt (match coverage) never triggered; second (gain vs block length) mis-fired on screenshots
   (+23% size); final rule (gain vs literal cost, literal-dominated blocks only, backoff) keeps graphics at
   2.633 MB (was 2.683) and makes photo ga8 3x faster (40.7 vs 122 ms, smaller).
@@ -74,7 +74,7 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
 
 ## 22:14-22:40  final matrices (bench/results/final/, summarised in README "Results")
 * Load 1.2-1.7 during the long runs (other agents), 0.2-1.2 for the graphics decode re-run.
-* Decode: pngfast IMAGERS beats image-rs in every group (ALL 336 vs 226 MB/s; photo g8 2.3x, ga8 1.6x);
+* Decode: qpng IMAGERS beats image-rs in every group (ALL 336 vs 226 MB/s; photo g8 2.3x, ga8 1.6x);
   RAW beats png IDENTITY in every group at low load. Cleaned decoder = v3 prototype or better (quiet run).
 * Encode: FASTEST/FAST/DEFAULT/BEST vs png Fastest/Fast/Balanced/High (miniz + zlib-rs): photos dominated
   (faster and smaller) except FASTEST p8 speed (-11%) and BEST p8 speed vs zlib-rs High (7 vs 11 MB/s).
@@ -93,7 +93,7 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
 * Gap 1/2 DONE: png-ultra (libdeflate level 101): single pass, offset-1 runs only, per-block Huffman code
   from a sampled dry run (every 8th 512-byte chunk, floor 1 per symbol, symbols 286/287 excluded!),
   4 literals per SWAR probe, 32-byte run extension, block rewound to stored if larger.
-  Blocks 64 KiB, 256 KiB after a >= 4:1 block. Chunk API (libdeflate_png_ultra_compress_chunk) lets pngfast
+  Blocks 64 KiB, 256 KiB after a >= 4:1 block. Chunk API (libdeflate_png_ultra_compress_chunk) lets qpng
   filter rows into an L2-sized buffer and compress as it goes: no full filtered image -> no 200 page
   faults per MB (was 26% of FASTEST time on graphics). FASTEST = Up + ultra stream; FAST = adaptive
   (Up after a >= 4:1 chunk) + ultra stream. Both now beat png Fastest / Fast in every group (speed+size).
@@ -112,7 +112,7 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   - sample = 32-row strips every 192 rows (h >= 512; 16/64 for h >= 256): same decisions as 16/64 on the
     corpus, half the cost. Sampling biases against filter None (long-range repeats cut): None wins at <= 104%
     of the Up-biased sample size for depth <= 8 (fixed screenshot.g8: 35.8K -> 32.7K).
-  - new internal filter mode PF__FILTER_ADAPTIVE_FLAT = Up-biased adaptive without Paeth for opaque graphics:
+  - new internal filter mode QPNG__FILTER_ADAPTIVE_FLAT = Up-biased adaptive without Paeth for opaque graphics:
     smaller (graphics.rgb8 -1.7%, g16 -1.3%) and the cost pass skips the costliest predictor. Alpha keeps
     Paeth (+5-8% without it).
   - final levels: alpha 8-bit L8/48/258; None-filtered 8-bit RGB L4/4/16 (long exact repeats); other RGB
@@ -126,8 +126,8 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   slowness: deflate_find_min_cost_path + bt matchfinder on long runs (every length 3..nice costed).
   BEST photos: L8 instead of L10: 2x faster, ~1.5% larger, still smaller and faster than zrs High in every
   photo group (p8 21 vs 11 MB/s @ 2.055 vs 1.942).
-* Item 5: portable scalar build (PF_X86 = x86-64 && !PNGFAST_NO_SIMD): scalar filter costs/rows, scalar
-  two-row unfilter pairs for every bpp; byte-identical encoder output; ctest 7/7 with -DPNGFAST_NO_SIMD;
+* Item 5: portable scalar build (QPNG_X86 = x86-64 && !QPNG_NO_SIMD): scalar filter costs/rows, scalar
+  two-row unfilter pairs for every bpp; byte-identical encoder output; ctest 7/7 with -DQPNG_NO_SIMD;
   sanitize.sh also runs the portable build. (No aarch64 sysroot on the box to cross-compile.)
 * 10:35-10:55 gap-4 root-cause probe (graphics.rgba8, zlib-rs-High-filtered bytes, /tmp/an/tok.py token
   stats): zrs9 15630 B = 1 block, 3101 lits, 8923 matches (6446 x 258, 4336 at dist 1); libdeflate L9 19185 B
@@ -141,14 +141,14 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
 
 ## Phase 4 (Oct 10, from 20:55) — optional zlib-ng backend
 * Vendored zlib-ng develop f18efb8 (2026-10-07) in third_party/zlib-ng (unmodified; test/ doc/ .github removed;
-  PNGFAST_VENDOR.md). CMake `PNGFAST_WITH_ZLIBNG` (default ON when present): add_subdirectory EXCLUDE_FROM_ALL with
-  ZLIB_COMPAT=OFF, no gz API, runtime CPU detection, objects folded into libpngfast. OFF build: ctest 6/6.
-* src/deflate_backend.{c,h}: pf_zcfg {backend, level, depth, nice, minlen, strategy} + pf__zcompress /
-  pf__zbound / pf__zcompress_ultra_rows. encode.c only picks a pf_zcfg (graphics_cfg / photo_cfg). zlib-ng runs with
+  QPNG_VENDOR.md). CMake `QPNG_WITH_ZLIBNG` (default ON when present): add_subdirectory EXCLUDE_FROM_ALL with
+  ZLIB_COMPAT=OFF, no gz API, runtime CPU detection, objects folded into libqpng. OFF build: ctest 6/6.
+* src/deflate_backend.{c,h}: qpng_zcfg {backend, level, depth, nice, minlen, strategy} + qpng__zcompress /
+  qpng__zbound / qpng__zcompress_ultra_rows. encode.c only picks a qpng_zcfg (graphics_cfg / photo_cfg). zlib-ng runs with
   memLevel 9, the user's allocator hooks, 1 GiB in/out slices (32-bit avail_*); depth/nice via zng_deflateTune.
-* API 1.1: pf_encode_options.backend (AUTO/LIBDEFLATE/ZLIBNG), .zlib_strategy, pf_backend_available().
+* API 1.1: qpng_encode_options.backend (AUTO/LIBDEFLATE/ZLIBNG), .zlib_strategy, qpng_backend_available().
   LIBDEFLATE = the 1.0 policy byte for byte (checked: identical totals on the 160-file corpus for all presets).
-* pfbench: PRESET#ld / PRESET#zng, PRESET@B.L.D.N.M.S (PF_POLICY env, builds with -DPF_POLICY_OVERRIDE only:
+* qpngbench: PRESET#ld / PRESET#zng, PRESET@B.L.D.N.M.S (QPNG_POLICY env, builds with -DQPNG_POLICY_OVERRIDE only:
   overrides the final graphics stream), deflate zL[sS], inflate zng.
 * Sweep DEFAULT graphics (bench/results/phase4/sweep_default_gfx.md, load 1.3-1.7, core 3, 2x3 reps): zlib-ng on
   our probed filtering: L6 smaller than the tuned libdeflate configs in every group and faster in 5/7
@@ -172,7 +172,7 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
   Inflate: zlib-ng 363 MB/s vs patched libdeflate pairs 570 -> decode stays on libdeflate.
 * 21:50-22:00 ctest ON 7/7, OFF 6/6, sanitize.sh (ASan+UBSan with zlib-ng, portable no-zlib-ng, mutation +
   libFuzzer 30 s each): OK.
-* TODO: static libpngfast exports zlib-ng's internal unprefixed symbols (deflate_medium, crc32_*, adler32_c ...)
+* TODO: static libqpng exports zlib-ng's internal unprefixed symbols (deflate_medium, crc32_*, adler32_c ...)
   and zng_*: linking another static zlib-ng into the same program would clash -> prefix via objcopy
   --prefix-symbols / a partial link, or a version script for the shared build. ga8 BEST: chain/lazy tuning
   per alpha content. Probe filter choice was tuned for libdeflate; re-tune for zlib-ng L6 (None allowance).
@@ -182,54 +182,54 @@ Instrumented old encoder (pngfast3_enc), photo rgb8 (kodim01/03/05 + cathedral, 
 * After the restore cmake/clang/zlib1g-dev were missing (apt reinstalled) and build dirs + tools/rsref/target
   were gone (rsref rebuilt). Long commands now run in the background with timeout + nice, logs in /tmp.
 * Item 1 DONE (symbol hygiene). zlib-ng's ZLIB_SYMBOL_PREFIX only renames the public zng_* names (internal ones such
-  as deflate_medium, crc32_*, alloc_deflate stay global), so pngfast hides everything itself:
+  as deflate_medium, crc32_*, alloc_deflate stay global), so qpng hides everything itself:
   - all objects hidden visibility (zlib-ng target: C_VISIBILITY_PRESET hidden);
-  - export list generated at configure time from the `PF_API` lines of pngfast.h (build/pngfast.exports + .map);
-  - shared: version script PNGFAST_1 { global: <api>; local: *; };
-  - static: ld -r of all objects -> objcopy --keep-global-symbols=pngfast.exports -> one-object libpngfast.a
-    (option PNGFAST_HIDE_SYMBOLS, default ON; ELF only). pngfast_internal (un-localized) for test_deflate/pfbench.
+  - export list generated at configure time from the `QPNG_API` lines of qpng.h (build/qpng.exports + .map);
+  - shared: version script QPNG_1 { global: <api>; local: *; };
+  - static: ld -r of all objects -> objcopy --keep-global-symbols=qpng.exports -> one-object libqpng.a
+    (option QPNG_HIDE_SYMBOLS, default ON; ELF only). qpng_internal (un-localized) for test_deflate/qpngbench.
   - ctest `symbols` (scripts/check_symbols.sh: nm vs export list) and `link_test` (tests/link_test.sh builds stock
     static zlib-ng native + zlib-compat and libdeflate with upstream names once under build/link_test, links them
-    with libpngfast.a, uses both sides). Negative control: libpngfast_internal.a -> "multiple definition".
+    with libqpng.a, uses both sides). Negative control: libqpng_internal.a -> "multiple definition".
     sanitize.sh also builds the shared lib and runs `symbols`.
-* Item 4c DONE (metadata): pngfast.h pf_metadata / pf_text / pf_chunk, pf_read_metadata (+options: per-chunk
-  inflate limit 16 MiB, total 64 MiB, 4096 text+unknown chunks, keep_unknown, verify_crc), pf_metadata_free;
-  pf_encode_options.metadata writes it (src/metadata.c; serialised before the output bound; zTXt/iTXt/iCCP
+* Item 4c DONE (metadata): qpng.h qpng_metadata / qpng_text / qpng_chunk, qpng_read_metadata (+options: per-chunk
+  inflate limit 16 MiB, total 64 MiB, 4096 text+unknown chunks, keep_unknown, verify_crc), qpng_metadata_free;
+  qpng_encode_options.metadata writes it (src/metadata.c; serialised before the output bound; zTXt/iTXt/iCCP
   compressed with libdeflate L9). Malformed / duplicate / bad-CRC / over-limit ancillary chunks are skipped and
   counted. Unknown chunks report BEFORE_PLTE only in front of a real PLTE. tests/test_metadata.c (ctest metadata):
   all fields round trip (byte-identical re-encode), limits, 64 MiB zTXt bomb refused, corrupted gAMA skipped,
   validation errors, PngSuite values, all 162 PngSuite files re-encoded with their metadata. fuzz_decode parses,
   rewrites and re-parses metadata. (Parser uses `goto bad`: a `continue` in a do{}while(0) macro was the bug
   ASan found in the lost first version.) Version 1.2.0.
-* Item 4a (streaming) first version DONE: src/stream.c + pf_zstream / pf_zistream in deflate_backend.
-  - pf_decoder (push, any split; header via pf_decoder_info as soon as IHDR is in; CRC incremental; sticky errors).
+* Item 4a (streaming) first version DONE: src/stream.c + qpng_zstream / qpng_zistream in deflate_backend.
+  - qpng_decoder (push, any split; header via qpng_decoder_info as soon as IHDR is in; CRC incremental; sticky errors).
     Row mode + non-interlaced + zlib-ng: true streaming (raw zlib-ng inflate into one row, unfilter vs previous row,
     transform, callback; O(row) memory). Image mode / interlaced / libdeflate-only builds: input buffered, one-shot
-    pf_decode at finish (rows emitted after). pf_decode_stream(read_fn) convenience.
-  - pf_encoder (push rows, write_fn sink, IDAT <= 256 KiB): FASTEST/FAST png-ultra chunks (hybrid Up switch as
+    qpng_decode at finish (rows emitted after). qpng_decode_stream(read_fn) convenience.
+  - qpng_encoder (push rows, write_fn sink, IDAT <= 256 KiB): FASTEST/FAST png-ultra chunks (hybrid Up switch as
     one-shot FAST), DEFAULT/BEST zlib-ng 6/9 (png-ultra adaptive without zlib-ng); metadata written; libdeflate
-    levels / png-fast -> PF_ERR_UNSUPPORTED (not streamable).
-  - new status codes PF_ERR_ABORTED, PF_ERR_STATE, PF_MORE_DATA (= 1).
+    levels / png-fast -> QPNG_ERR_UNSUPPORTED (not streamable).
+  - new status codes QPNG_ERR_ABORTED, QPNG_ERR_STATE, QPNG_MORE_DATA (= 1).
   - tests/test_stream.c (ctest stream): 217 files x 3 output modes: image mode / row mode / pull reader with random
-    push sizes == pf_decode; stream encode 4 presets x 3 backends with random row batches round trip; truncation,
+    push sizes == qpng_decode; stream encode 4 presets x 3 backends with random row batches round trip; truncation,
     header-first, sticky CRC error, row/write callback abort, state errors. Bug found: libdeflate_crc32(crc, NULL, 0)
     returns 0 (IEND CRC) -> guarded.
-* Item 4b (APNG) DONE: src/apng.c. pf_apng_open (structure validation: acTL once and before IDAT, num_frames
+* Item 4b (APNG) DONE: src/apng.c. qpng_apng_open (structure validation: acTL once and before IDAT, num_frames
   1..2^31-1 == fcTL count, sequence numbers 0,1,2.. over fcTL+fdAT, every fcTL has data, default-image fcTL must
-  equal IHDR, regions inside the canvas; no acTL / acTL after IDAT -> still image), pf_apng_next_frame (RGBA8
+  equal IHDR, regions inside the canvas; no acTL / acTL after IDAT -> still image), qpng_apng_next_frame (RGBA8
   canvas, dispose/blend per spec, first-frame PREVIOUS -> BACKGROUND, integer source-over with rounding),
-  pf_apng_rewind, pf_apng_raw_frame (any output layout), pf_encode_apng (pf_encode per frame, IDAT payload moved
-  into IDAT/fdAT, optional separate default image). Frames decoded through a synthetic PNG -> pf_decode (shared
+  qpng_apng_rewind, qpng_apng_raw_frame (any output layout), qpng_encode_apng (qpng_encode per frame, IDAT payload moved
+  into IDAT/fdAT, optional separate default image). Frames decoded through a synthetic PNG -> qpng_decode (shared
   paths). tests/test_apng.c: Philip Taylor's APNG suite (tests/data/apng, 61 files: final frame vs expectation,
   invalid files rejected; 023 checked as raw 229,0,0 since "nearly black" needs gAMA), encode/decode round trip
   vs float reference compositor (max diff <= 1), raw frames, every PngSuite still via the APNG API.
 * Verification (23:00-23:35 box time): ctest 13/13 incl. corpus; scripts/sanitize.sh OK (ASan/UBSan, zlib-ng ON
   and OFF builds, shared-lib symbols); libFuzzer 90 s each: decode 1.59M runs, roundtrip 105k, stream 1.23M, no
   crashes; clang -Wall -Wextra: 0 warnings outside third_party; gcc build warnings-clean.
-  png crate cross-check: pf_apng_raw_frame raw pixels + fcTL fields identical to the png crate's for all 41 valid
-  suite files and for a pf_encode_apng file (4 frames, separate default image); the png crate accepts some invalid
-  suite files partially, pngfast rejects them up front (PF_ERR_APNG).
-* Perf (bench/results/phase5, 40 corpus files, core 3, load 0.2-0.6, old = af6c9f5 pfbench alternated):
+  png crate cross-check: qpng_apng_raw_frame raw pixels + fcTL fields identical to the png crate's for all 41 valid
+  suite files and for a qpng_encode_apng file (4 frames, separate default image); the png crate accepts some invalid
+  suite files partially, qpng rejects them up front (QPNG_ERR_APNG).
+* Perf (bench/results/phase5, 40 corpus files, core 3, load 0.2-0.6, old = af6c9f5 qpngbench alternated):
   one-shot new/old time geomean: decode imagers 1.03 (1st run), raw 1.000 (4-round re-run), encode fastest 1.003
   (re-run; the 1.19 of the first run was noise), fast 1.006, default 1.002, best 1.022; sizes identical.
   Streaming vs one-shot: decode image mode x1.01, row mode (zlib-ng inflate) x1.25; encode fastest x1.06 / +0.3 %

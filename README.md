@@ -1,10 +1,10 @@
-# pngfast
+# qpng
 
 Fast, small PNG decoder and encoder in C11, built on a vendored and modified
 [libdeflate](https://github.com/ebiggers/libdeflate), plus an optional vendored [zlib-ng](https://github.com/zlib-ng/zlib-ng)
 encoder backend for graphics. Single header API, no other dependencies,
 runtime CPU dispatch on x86-64 (SSE2 baseline, AVX2 / BMI2 / AVX-512 where available; never `-march=native`).
-Other architectures (or `-DPNGFAST_NO_SIMD`) build portable scalar kernels with identical output.
+Other architectures (or `-DQPNG_NO_SIMD`) build portable scalar kernels with identical output.
 
 * **Decode**: all PNG color types / bit depths, Adam7, tRNS, 16-bit; outputs raw samples, "expanded"
   (png crate `EXPAND` semantics), or image-rs layout (8-bit RGBA/RGB/LA/L, 16-bit native endian).
@@ -23,67 +23,67 @@ Other architectures (or `-DPNGFAST_NO_SIMD`) build portable scalar kernels with 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ctest --test-dir build              # api, conformance, roundtrip, metadata, stream, apng, symbols, link_test, fuzz smoke
-cmake --install build --prefix /usr/local   # installs pngfast.h, libpngfast, pngfast.pc, CMake package
+cmake --install build --prefix /usr/local   # installs qpng.h, libqpng, qpng.pc, CMake package
 ```
 
-Options: `PNGFAST_WITH_ZLIBNG` (default ON when `third_party/zlib-ng` exists; OFF builds a libdeflate-only
-library with the pngfast 1.0 encoder policy), `PNGFAST_BUILD_SHARED` (default OFF), `PNGFAST_BUILD_TESTS`, `PNGFAST_BUILD_TOOLS`,
-`PNGFAST_HIDE_SYMBOLS` (default ON: the library exports only the `pf_*` API, see below), `PNGFAST_SANITIZE` (ASan+UBSan), `PNGFAST_LIBFUZZER` (clang), `PNGFAST_CORPUS_DIR` (extra round-trip corpus).
-Consumers: `pkg-config --cflags --libs pngfast` or `find_package(pngfast)` + `pngfast::pngfast`.
+Options: `QPNG_WITH_ZLIBNG` (default ON when `third_party/zlib-ng` exists; OFF builds a libdeflate-only
+library with the qpng 1.0 encoder policy), `QPNG_BUILD_SHARED` (default OFF), `QPNG_BUILD_TESTS`, `QPNG_BUILD_TOOLS`,
+`QPNG_HIDE_SYMBOLS` (default ON: the library exports only the `qpng_*` API, see below), `QPNG_SANITIZE` (ASan+UBSan), `QPNG_LIBFUZZER` (clang), `QPNG_CORPUS_DIR` (extra round-trip corpus).
+Consumers: `pkg-config --cflags --libs qpng` or `find_package(qpng)` + `qpng::qpng`.
 
 ## API
 
 ```c
-#include <pngfast.h>
+#include <qpng.h>
 
 /* decode */
-pf_decode_options dopt;
-pf_decode_options_init(&dopt);
-dopt.output = PF_OUTPUT_IMAGERS;          /* or PF_OUTPUT_RAW / PF_OUTPUT_EXPAND */
+qpng_decode_options dopt;
+qpng_decode_options_init(&dopt);
+dopt.output = QPNG_OUTPUT_IMAGERS;          /* or QPNG_OUTPUT_RAW / QPNG_OUTPUT_EXPAND */
 dopt.max_output_bytes = 256u << 20;       /* bomb limit (default 1 GiB) */
-pf_image img;
-pf_status s = pf_decode(png, png_size, &dopt, &img);
-if (s != PF_OK) { fprintf(stderr, "%s\n", pf_status_string(s)); return 1; }
+qpng_image img;
+qpng_status s = qpng_decode(png, png_size, &dopt, &img);
+if (s != QPNG_OK) { fprintf(stderr, "%s\n", qpng_status_string(s)); return 1; }
 /* img.pixels: img.height rows of img.stride bytes; img.channels, img.bit_depth, img.color_type */
-pf_image_free(&img);
+qpng_image_free(&img);
 
 /* encode */
-pf_encode_options eopt;
-pf_encode_options_init(&eopt);
-eopt.preset = PF_PRESET_DEFAULT;          /* FASTEST, FAST, DEFAULT, BEST */
-/* optional: eopt.filter = PF_FILTER_PAETH; eopt.deflate_level = 9 (1..12, or PF_DEFLATE_PNGFAST*) */
-/* optional: eopt.backend = PF_BACKEND_ZLIBNG (or LIBDEFLATE; default AUTO); with ZLIBNG, deflate_level is a
- * zlib-ng level 1..9 and eopt.zlib_strategy a PF_ZSTRATEGY_*; pf_backend_available() tells what is built in */
+qpng_encode_options eopt;
+qpng_encode_options_init(&eopt);
+eopt.preset = QPNG_PRESET_DEFAULT;          /* FASTEST, FAST, DEFAULT, BEST */
+/* optional: eopt.filter = QPNG_FILTER_PAETH; eopt.deflate_level = 9 (1..12, or QPNG_DEFLATE_QPNG*) */
+/* optional: eopt.backend = QPNG_BACKEND_ZLIBNG (or LIBDEFLATE; default AUTO); with ZLIBNG, deflate_level is a
+ * zlib-ng level 1..9 and eopt.zlib_strategy a QPNG_ZSTRATEGY_*; qpng_backend_available() tells what is built in */
 /* palette images: eopt.palette = rgb_triplets; eopt.palette_entries = n; optional eopt.trns / trns_bytes */
 uint8_t *out; size_t out_size;
-s = pf_encode(pixels, width, height, 0 /* stride, 0 = packed */, PF_COLOR_RGBA, 8, &eopt, &out, &out_size);
+s = qpng_encode(pixels, width, height, 0 /* stride, 0 = packed */, QPNG_COLOR_RGBA, 8, &eopt, &out, &out_size);
 /* ... */
-pf_buffer_free(out, NULL);                /* same allocator as eopt.allocator */
+qpng_buffer_free(out, NULL);                /* same allocator as eopt.allocator */
 ```
 
-`pf_read_info()` parses IHDR without decoding. Custom allocation: fill a `pf_allocator {alloc, free, user}`
+`qpng_read_info()` parses IHDR without decoding. Custom allocation: fill a `qpng_allocator {alloc, free, user}`
 and pass it in either options struct; decoded images remember their allocator.
 Encoding accepts samples in PNG byte order (16-bit big-endian, sub-byte depths packed MSB first) - exactly
-what `PF_OUTPUT_RAW` decoding returns.
+what `QPNG_OUTPUT_RAW` decoding returns.
 
 ### Metadata (ancillary chunks)
 
 ```c
-pf_metadata meta;                                  /* tEXt/zTXt/iTXt, iCCP, sRGB, gAMA, cHRM, cICP, mDCV, cLLI, */
-if (pf_read_metadata(png, png_size, NULL, &meta) == PF_OK) {   /* pHYs, tIME, bKGD, sBIT, eXIf, unknown chunks */
+qpng_metadata meta;                                  /* tEXt/zTXt/iTXt, iCCP, sRGB, gAMA, cHRM, cICP, mDCV, cLLI, */
+if (qpng_read_metadata(png, png_size, NULL, &meta) == QPNG_OK) {   /* pHYs, tIME, bKGD, sBIT, eXIf, unknown chunks */
     for (size_t i = 0; i < meta.text_count; i++) printf("%s: %s\n", meta.texts[i].keyword, meta.texts[i].text);
     if (meta.iccp) use_profile(meta.iccp, meta.iccp_size);       /* decompressed */
     eopt.metadata = &meta;                         /* write everything back (unknown chunks at their place) */
-    pf_encode(pixels, w, h, 0, PF_COLOR_RGB, 8, &eopt, &out, &out_size);
-    pf_metadata_free(&meta);
+    qpng_encode(pixels, w, h, 0, QPNG_COLOR_RGB, 8, &eopt, &out, &out_size);
+    qpng_metadata_free(&meta);
 }
 /* writing from scratch: */
-pf_text t = { PF_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", 1 };
-pf_metadata m = {0}; m.texts = &t; m.text_count = 1; m.has_phys = 1; m.phys_x = m.phys_y = 2835; m.phys_unit = 1;
+qpng_text t = { QPNG_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", 1 };
+qpng_metadata m = {0}; m.texts = &t; m.text_count = 1; m.has_phys = 1; m.phys_x = m.phys_y = 2835; m.phys_unit = 1;
 eopt.metadata = &m;
 ```
 
-Limits (`pf_metadata_options`): 16 MiB per decompressed zTXt/iTXt/iCCP, 64 MiB in total, 4096 text + unknown
+Limits (`qpng_metadata_options`): 16 MiB per decompressed zTXt/iTXt/iCCP, 64 MiB in total, 4096 text + unknown
 chunks; malformed / duplicate / bad-CRC / over-limit ancillary chunks are skipped and counted in `meta.skipped`.
 Values are reported as stored: **no color management** is applied (gAMA, cHRM, iCCP, sRGB, cICP, mDCV, cLLI, sBIT
 and bKGD are informational).
@@ -93,70 +93,70 @@ and bKGD are informational).
 ```c
 /* decode: push bytes as they arrive; rows are delivered through a callback */
 static int on_row(void *user, uint32_t y, const uint8_t *row, size_t n) { consume(row, n); return 0; }
-pf_decoder *dec; pf_decoder_new(&dopt, on_row, user, &dec);    /* row_cb NULL: whole image at finish */
+qpng_decoder *dec; qpng_decoder_new(&dopt, on_row, user, &dec);    /* row_cb NULL: whole image at finish */
 while ((n = recv(sock, buf, sizeof buf, 0)) > 0) {
-    s = pf_decoder_push(dec, buf, n);           /* PF_MORE_DATA, PF_OK after IEND, or an error */
-    if (pf_decoder_info(dec, &info) == PF_OK) { /* header available as soon as IHDR arrived */ }
-    if (s != PF_MORE_DATA) break;
+    s = qpng_decoder_push(dec, buf, n);           /* QPNG_MORE_DATA, QPNG_OK after IEND, or an error */
+    if (qpng_decoder_info(dec, &info) == QPNG_OK) { /* header available as soon as IHDR arrived */ }
+    if (s != QPNG_MORE_DATA) break;
 }
-if (s == PF_OK) s = pf_decoder_finish(dec, NULL /* or &img in image mode */);
-pf_decoder_free(dec);
-/* or pull: pf_decode_stream(read_fn, file, &dopt, on_row, user, NULL); */
+if (s == QPNG_OK) s = qpng_decoder_finish(dec, NULL /* or &img in image mode */);
+qpng_decoder_free(dec);
+/* or pull: qpng_decode_stream(read_fn, file, &dopt, on_row, user, NULL); */
 
 /* encode: rows in, bytes out through a write callback, bounded memory */
 static int wr(void *f, const uint8_t *p, size_t n) { return fwrite(p, 1, n, f) != n; }
-pf_encoder *enc; pf_encoder_new(w, h, PF_COLOR_RGBA, 8, &eopt, wr, file, &enc);
-for (y = 0; y < h; y += k) pf_encoder_push_rows(enc, rows + y * stride, stride, k);
-pf_encoder_finish(enc); pf_encoder_free(enc);
+qpng_encoder *enc; qpng_encoder_new(w, h, QPNG_COLOR_RGBA, 8, &eopt, wr, file, &enc);
+for (y = 0; y < h; y += k) qpng_encoder_push_rows(enc, rows + y * stride, stride, k);
+qpng_encoder_finish(enc); qpng_encoder_free(enc);
 ```
 
 Trade-offs: libdeflate (used by the one-shot decoder) cannot inflate incrementally. Row mode on a non-interlaced
 image with zlib-ng built in is truly incremental (zlib-ng raw inflate into a one-row buffer, O(row) memory).
 Image mode, interlaced images and libdeflate-only builds buffer the compressed input and decode it with the
-one-shot path once IEND arrived (memory: file + image; image mode is then as fast as `pf_decode`). The encoder
+one-shot path once IEND arrived (memory: file + image; image mode is then as fast as `qpng_decode`). The encoder
 compresses FASTEST/FAST with libdeflate's streamed png-ultra (as one-shot) and DEFAULT/BEST with zlib-ng L6/L9
 (png-ultra without zlib-ng); it filters row by row (no whole-image probing), so output can be a bit larger than
-`pf_encode`'s. Measurements in NOTES.md (Phase 5).
+`qpng_encode`'s. Measurements in NOTES.md (Phase 5).
 
 ### APNG
 
 ```c
-pf_apng *a;
-if (pf_apng_open(png, size, NULL, &a) == PF_OK) {           /* png must stay valid until pf_apng_free */
-    pf_apng_info ai; pf_apng_get_info(a, &ai);                /* num_frames, num_plays, canvas size */
-    const uint8_t *canvas; pf_frame_info fi;
-    while (pf_apng_next_frame(a, &canvas, &fi) == PF_OK)       /* composed RGBA8 canvas, width * 4 stride */
+qpng_apng *a;
+if (qpng_apng_open(png, size, NULL, &a) == QPNG_OK) {           /* png must stay valid until qpng_apng_free */
+    qpng_apng_info ai; qpng_apng_get_info(a, &ai);                /* num_frames, num_plays, canvas size */
+    const uint8_t *canvas; qpng_frame_info fi;
+    while (qpng_apng_next_frame(a, &canvas, &fi) == QPNG_OK)       /* composed RGBA8 canvas, width * 4 stride */
         show(canvas, fi.delay_num, fi.delay_den ? fi.delay_den : 100);
-    pf_image raw; pf_apng_raw_frame(a, 1, NULL, &raw, &fi);   /* one frame's own pixels, any output layout */
-    pf_image_free(&raw);
-    pf_apng_free(a);
+    qpng_image raw; qpng_apng_raw_frame(a, 1, NULL, &raw, &fi);   /* one frame's own pixels, any output layout */
+    qpng_image_free(&raw);
+    qpng_apng_free(a);
 }
 /* encode: frames of their own size + offsets, dispose / blend ops, delays */
-pf_apng_frame fr[2] = { { px0, 0, { W, H, 0, 0, 1, 10, PF_DISPOSE_NONE, PF_BLEND_SOURCE } },
-                        { px1, 0, { 16, 16, 8, 8, 1, 10, PF_DISPOSE_PREVIOUS, PF_BLEND_OVER } } };
-pf_encode_apng(W, H, PF_COLOR_RGBA, 8, fr, 2, 0 /* loop forever */, NULL, 0, &eopt, &out, &out_size);
+qpng_apng_frame fr[2] = { { px0, 0, { W, H, 0, 0, 1, 10, QPNG_DISPOSE_NONE, QPNG_BLEND_SOURCE } },
+                        { px1, 0, { 16, 16, 8, 8, 1, 10, QPNG_DISPOSE_PREVIOUS, QPNG_BLEND_OVER } } };
+qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, 2, 0 /* loop forever */, NULL, 0, &eopt, &out, &out_size);
 ```
 
 Semantics follow the APNG spec / browsers (canvas starts transparent black, first-frame DISPOSE_PREVIOUS acts as
 BACKGROUND, 8-bit source-over blending). Invalid animation structure (sequence numbers, frame count, regions, ...)
-gives `PF_ERR_APNG`; `pf_decode` ignores APNG chunks and returns the default image. Files without acTL open as a
+gives `QPNG_ERR_APNG`; `qpng_decode` ignores APNG chunks and returns the default image. Files without acTL open as a
 one-frame still image. Tested against Philip Taylor's APNG suite; raw frames and fcTL fields are identical to the
 png crate's for every valid suite file.
 
 ### Symbol hygiene
 
-`libpngfast.a` / `libpngfast.so` export only the functions declared `PF_API` in `pngfast.h` (export list generated
+`libqpng.a` / `libqpng.so` export only the functions declared `QPNG_API` in `qpng.h` (export list generated
 from the header): the shared library uses a linker version script, the static archive is one partially linked
 object (`ld -r`) whose other globals are localized with `objcopy`. The vendored libdeflate and zlib-ng (including
 zlib-ng internals such as `deflate_medium`, `crc32_*`, `functable`) therefore never clash with a system zlib,
 zlib-ng or libdeflate; ctest `symbols` (nm check) and `link_test` (links against stock static zlib-ng in both
-flavours and libdeflate) enforce it. `-DPNGFAST_HIDE_SYMBOLS=OFF` (or non-ELF platforms) skips the localization.
+flavours and libdeflate) enforce it. `-DQPNG_HIDE_SYMBOLS=OFF` (or non-ELF platforms) skips the localization.
 
 ## Layout
 
 | path | contents |
 |---|---|
-| `include/pngfast.h` | public API (versioned, documented) |
+| `include/qpng.h` | public API (versioned, documented) |
 | `src/decode.c` | chunk parsing, limits, fused inflate -> unfilter driver, Adam7 |
 | `src/unfilter.c` | scalar / SSE2 / AVX2 un-filter kernels, 2-row wavefronts, AVX2 quad-Paeth |
 | `src/expand.c` | output transforms (sub-byte unpack, palette / tRNS expansion, 16-bit swap) |
@@ -164,15 +164,15 @@ flavours and libdeflate) enforce it. `-DPNGFAST_HIDE_SYMBOLS=OFF` (or non-ELF pl
 | `src/encode.c` | validation, presets / content probing, backend policy (`graphics_cfg` / `photo_cfg`), chunk writer |
 | `src/deflate_backend.{c,h}` | the encoder's only deflate interface: libdeflate (levels, png-fast, streamed png-ultra) and zlib-ng |
 | `src/metadata.c` | ancillary chunk reader / writer, limits |
-| `src/stream.c` | `pf_decoder` (push decoding) and `pf_encoder` (row-push encoding) |
-| `src/apng.c` | APNG validation, frame iterator / composition, raw frames, `pf_encode_apng` |
+| `src/stream.c` | `qpng_decoder` (push decoding) and `qpng_encoder` (row-push encoding) |
+| `src/apng.c` | APNG validation, frame iterator / composition, raw frames, `qpng_encode_apng` |
 | `src/common.c` | CPU dispatch, allocator hooks, status strings |
-| `third_party/zlib-ng` | optional, unmodified zlib-ng `develop` f18efb8, native `zng_*` API ([PNGFAST_VENDOR.md](third_party/zlib-ng/PNGFAST_VENDOR.md)) |
-| `third_party/libdeflate` | libdeflate v1.26 + pngfast changes ([PNGFAST_CHANGES.md](third_party/libdeflate/PNGFAST_CHANGES.md), [patch](third_party/libdeflate/pngfast-changes.patch)); symbols renamed `pf_libdeflate_*` |
+| `third_party/zlib-ng` | optional, unmodified zlib-ng `develop` f18efb8, native `zng_*` API ([QPNG_VENDOR.md](third_party/zlib-ng/QPNG_VENDOR.md)) |
+| `third_party/libdeflate` | libdeflate v1.26 + qpng changes ([QPNG_CHANGES.md](third_party/libdeflate/QPNG_CHANGES.md), [patch](third_party/libdeflate/qpng-changes.patch)); symbols renamed `qpng_libdeflate_*` |
 | `tests/` | conformance (vs png crate refs), round trips, API tests, data |
 | `fuzz/` | `fuzz_decode` (+ metadata), `fuzz_roundtrip`, `fuzz_stream` (streaming vs one-shot, APNG) (libFuzzer / AFL++ / standalone mutation driver) |
-| `bench/` | `pfbench` (C), `run.py` (driver), `results/` |
-| `tools/` | `pngfast-cli`, `rsref` (Rust: png crate / image-rs / fdeflate reference + benchmark) |
+| `bench/` | `qpngbench` (C), `run.py` (driver), `results/` |
+| `tools/` | `qpng-cli`, `rsref` (Rust: png crate / image-rs / fdeflate reference + benchmark) |
 | `scripts/` | `sanitize.sh`, `check_symbols.sh`, `gen_libdeflate_patch.sh` |
 
 ## Presets
@@ -186,13 +186,13 @@ flavours and libdeflate) enforce it. `-DPNGFAST_HIDE_SYMBOLS=OFF` (or non-ELF pl
 
 ### Backends
 
-`pf_encode_options.backend`:
+`qpng_encode_options.backend`:
 
 | backend | what runs |
 |---|---|
-| `PF_BACKEND_AUTO` (default) | per preset and content (measured, see NOTES.md "Phase 4"): libdeflate png-ultra for FASTEST/FAST, png-fast / libdeflate L6-L8 for photos, zlib-ng L6 (DEFAULT) / L9 chain 1024 (BEST) for graphics. Without zlib-ng: same as LIBDEFLATE |
-| `PF_BACKEND_LIBDEFLATE` | libdeflate only: exactly the pngfast 1.0 output |
-| `PF_BACKEND_ZLIBNG` | every stream through zlib-ng (FASTEST L1 = deflate_quick, FAST L2, DEFAULT L6, BEST L9; filter probing unchanged); `deflate_level` 1..9 and `zlib_strategy` (FILTERED, HUFFMAN_ONLY, RLE) select explicitly. `PF_ERR_UNSUPPORTED` when not built in |
+| `QPNG_BACKEND_AUTO` (default) | per preset and content (measured, see NOTES.md "Phase 4"): libdeflate png-ultra for FASTEST/FAST, png-fast / libdeflate L6-L8 for photos, zlib-ng L6 (DEFAULT) / L9 chain 1024 (BEST) for graphics. Without zlib-ng: same as LIBDEFLATE |
+| `QPNG_BACKEND_LIBDEFLATE` | libdeflate only: exactly the qpng 1.0 output |
+| `QPNG_BACKEND_ZLIBNG` | every stream through zlib-ng (FASTEST L1 = deflate_quick, FAST L2, DEFAULT L6, BEST L9; filter probing unchanged); `deflate_level` 1..9 and `zlib_strategy` (FILTERED, HUFFMAN_ONLY, RLE) select explicitly. `QPNG_ERR_UNSUPPORTED` when not built in |
 
 Why two backends: libdeflate's PNG-specific single-pass compressors (png-ultra, png-fast) are unbeatable for speed
 and for photos, but on synthetic content (UI, text, alpha graphics, 16-bit) zlib's lazy parser and zlib-ng's
@@ -232,20 +232,20 @@ The adaptive filter is the libpng "minimum sum of absolute signed residuals" heu
 ```sh
 cmake --build build -j
 (cd tools/rsref && cargo build --release && CARGO_TARGET_DIR=target-zlibrs cargo build --release --features zlibrs)
-python3 bench/run.py encode  --rounds 3 --reps 3      # pngfast presets vs png crate presets
+python3 bench/run.py encode  --rounds 3 --reps 3      # qpng presets vs png crate presets
 python3 bench/run.py decode  --rounds 3 --reps 3 --interlaced   # vs image-rs / png crate
 python3 bench/run.py deflate --rounds 3 --reps 5      # raw zlib streams vs fdeflate
 ```
 
 `run.py` refuses to start when the 1-minute load average exceeds `--max-load`, pins to one core
 (`--cpu`, default 3), rotates configuration order per round and reports per-file medians aggregated per group
-(MB/s of decoded image bytes; ratio = raw / encoded). Corpus: `PNGFAST_CORPUS` (default the png-next format
+(MB/s of decoded image bytes; ratio = raw / encoded). Corpus: `QPNG_CORPUS` (default the png-next format
 corpus: kodim01/03/05, cathedral, screenshot, graphics in 20 color type / depth variants each, plus Adam7
 copies). Results of the last run are in `bench/results/`.
 
 ## Results (2026-10-10, CST, Intel AVX-512 box shared with other agents, load 0.7-1.5, core 3, medians)
 
-pngfast 1.1 (gcc 12 -O2, zlib-ng backend built in) vs png crate git b2f10c6 / image-rs 0.25.9 / fdeflate.
+qpng 1.1 (gcc 12 -O2, zlib-ng backend built in) vs png crate git b2f10c6 / image-rs 0.25.9 / fdeflate.
 `png-*` = png crate with flate2's default miniz_oxide backend, `pngz-*` = same with the `zlib-rs` feature.
 Cells: MB/s of decoded image bytes @ compression ratio. Raw CSVs / tables: `bench/results/phase4/` (encode_matrix,
 decode, inflate; backend sweeps). Phase 3 (libdeflate only) results: `bench/results/phase3_*.md`.
@@ -290,7 +290,7 @@ decode, inflate; backend sweeps). Phase 3 (libdeflate only) results: `bench/resu
 | photo/sub8 | 11 @ 1.974 | 34 @ 1.996 | 213 @ 2.148 | 4 @ 1.991 | 6 @ 1.996 | 18 @ 2.163 |
 | ALL | 14 @ 2.022 | 41 @ 2.045 | 79 @ 2.086 | 8 @ 2.032 | 12 @ 2.029 | 26 @ 2.101 |
 
-### Encode with the backend forced (`#ld` = PF_BACKEND_LIBDEFLATE = pngfast 1.0, `#zng` = PF_BACKEND_ZLIBNG)
+### Encode with the backend forced (`#ld` = QPNG_BACKEND_LIBDEFLATE = qpng 1.0, `#zng` = QPNG_BACKEND_ZLIBNG)
 
 | group | pf-default-ld | pf-default-zng | pf-best-ld | pf-best-zng | pf-fastest-zng | pf-fast-zng |
 |---|---|---|---|---|---|---|
@@ -313,7 +313,7 @@ decode, inflate; backend sweeps). Phase 3 (libdeflate only) results: `bench/resu
 AUTO equals `#ld` for FASTEST/FAST and photos (same code path; differences are noise) and `#zng` for DEFAULT
 graphics; BEST graphics uses zlib-ng L9 with chain 1024 (between the two BEST columns in speed).
 
-### Decode (image-rs API vs pngfast IMAGERS output; png crate IDENTITY vs pngfast RAW)
+### Decode (image-rs API vs qpng IMAGERS output; png crate IDENTITY vs qpng RAW)
 
 Decoder unchanged in 1.1; re-measured as a no-regression check (phase 3 ALL: pf-imagers 389 / imagers 261,
 now 359 / 252 under higher load, same ratio within noise; every group still ahead).
@@ -347,7 +347,7 @@ Inflate (MB/s) incl. zlib-ng: libdeflate stays the decoder (patched pair decodin
 | stream from zng6 | 383 | 426 | 334 | 331 |
 | ALL | 387 | 570 | 363 | 462 |
 
-### Raw zlib (filtered IDAT data; fdeflate vs pngfast's libdeflate)
+### Raw zlib (filtered IDAT data; fdeflate vs qpng's libdeflate)
 
 | group | fdeflate-ultrafast | fdeflate-rle | fdeflate-1 | fdeflate-6 | pf-rle | pf-fast | pf-6 |
 |---|---|---|---|---|---|---|---|
@@ -368,7 +368,7 @@ Inflate (MB/s) incl. zlib-ng: libdeflate stays the decoder (patched pair decodin
 * **png High with zlib-rs, graphics ga8**: BEST 31 MB/s @ 20.55 vs 15 @ 20.69 (0.7% larger, 2x faster).
   zlib-ng chain 1536 reaches 20.83 but then loses speed to miniz High (26 vs 26-28 MB/s).
 * **png Fastest, graphics 16-bit**: speed tie (1905 vs 1912 MB/s) at 42% better ratio.
-* Everything else: each pngfast preset is faster *and* smaller than its png counterpart with either flate2
+* Everything else: each qpng preset is faster *and* smaller than its png counterpart with either flate2
   backend in every group (phase-3 losses on DEFAULT rgb8/16-bit and BEST alpha/16-bit are closed by zlib-ng).
 * Raw deflate on graphics: fdeflate UltraFast is still faster as a raw compressor (table above: 1041 vs 796 MB/s).
 

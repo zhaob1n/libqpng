@@ -1,8 +1,8 @@
-/* link_test.c - see link_test.sh: pngfast next to stock zlib-ng / libdeflate (or zlib-compat zlib-ng). */
+/* link_test.c - see link_test.sh: qpng next to stock zlib-ng / libdeflate (or zlib-compat zlib-ng). */
 #include <stdio.h>
 #include <string.h>
-#include "pngfast.h"
-#ifdef PF_LINK_ZLIB_COMPAT
+#include "qpng.h"
+#ifdef QPNG_LINK_ZLIB_COMPAT
 #  include <zlib.h>
 #else
 #  include <zlib-ng.h>
@@ -13,15 +13,15 @@ int main(void) {
     static uint8_t px[64 * 64 * 3], z[65536], back[sizeof px];
     for (size_t i = 0; i < sizeof px; i++) px[i] = (uint8_t)(i * 7 / 5);
     int ok = 1;
-    for (int b = PF_BACKEND_AUTO; b <= PF_BACKEND_ZLIBNG; b++) {
-        if (!pf_backend_available((pf_backend)b)) continue;
-        pf_encode_options o; pf_encode_options_init(&o); o.backend = b; o.preset = PF_PRESET_BEST;
-        uint8_t *png; size_t pn; pf_image im;
-        ok &= pf_encode(px, 64, 64, 0, PF_COLOR_RGB, 8, &o, &png, &pn) == PF_OK;
-        ok &= pf_decode(png, pn, NULL, &im) == PF_OK && im.size == sizeof px && !memcmp(im.pixels, px, sizeof px);
-        pf_image_free(&im); pf_buffer_free(png, NULL);
+    for (int b = QPNG_BACKEND_AUTO; b <= QPNG_BACKEND_ZLIBNG; b++) {
+        if (!qpng_backend_available((qpng_backend)b)) continue;
+        qpng_encode_options o; qpng_encode_options_init(&o); o.backend = b; o.preset = QPNG_PRESET_BEST;
+        uint8_t *png; size_t pn; qpng_image im;
+        ok &= qpng_encode(px, 64, 64, 0, QPNG_COLOR_RGB, 8, &o, &png, &pn) == QPNG_OK;
+        ok &= qpng_decode(png, pn, NULL, &im) == QPNG_OK && im.size == sizeof px && !memcmp(im.pixels, px, sizeof px);
+        qpng_image_free(&im); qpng_buffer_free(png, NULL);
     }
-#ifdef PF_LINK_ZLIB_COMPAT
+#ifdef QPNG_LINK_ZLIB_COMPAT
     uLongf zn = sizeof z, bn = sizeof back;
     ok &= compress2(z, &zn, px, sizeof px, 9) == Z_OK && uncompress(back, &bn, z, zn) == Z_OK && bn == sizeof px;
 #else

@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "pf_libdeflate.h"
-#ifdef PNGFAST_TEST_ZLIB
+#include "qpng_libdeflate.h"
+#ifdef QPNG_TEST_ZLIB
 #include <zlib.h>
 #endif
 
@@ -15,7 +15,7 @@ static int check(const char *what, const unsigned char *in, size_t n, const unsi
     struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
     if (libdeflate_deflate_decompress(d, z, zn, b, n, &got) || got != n || memcmp(b, in, n)) bad |= 1;
     libdeflate_free_decompressor(d);
-#ifdef PNGFAST_TEST_ZLIB
+#ifdef QPNG_TEST_ZLIB
     z_stream s; memset(&s, 0, sizeof s);
     inflateInit2(&s, -15);
     s.next_in = (unsigned char *)z; s.avail_in = (uInt)zn; s.next_out = b; s.avail_out = (uInt)n + 1;
@@ -40,7 +40,7 @@ static void gen(unsigned char *p, size_t n, int kind, unsigned seed) {
 
 int main(void) {
     static const size_t sizes[] = { 1, 7, 33, 100, 4095, 5000, 65536, 70001, 300000, 1200000 };
-    /* 1000 + L: level L with pngfast's tuning knobs (search depth 48, nice 96, fixed minimum match 3) */
+    /* 1000 + L: level L with qpng's tuning knobs (search depth 48, nice 96, fixed minimum match 3) */
     static const int levels[] = { 1, 6, 9, 12, LIBDEFLATE_PNG_FAST_LEVEL, -1, LIBDEFLATE_PNG_ULTRA_LEVEL,
                                   1004, 1005, 1008, 1010 };
     int fails = 0, runs = 0;
