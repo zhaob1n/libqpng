@@ -3,7 +3,7 @@
 # round 2/2 load 1.38
 
 encode: MB/s of raw bytes (sum raw / sum per-file median), ratio = raw/encoded
-| group | png-balanced | pngz-balanced | pf-default | png-high | pngz-high | pf-best |
+| group | png-balanced | pngz-balanced | qpng-default | png-high | pngz-high | qpng-best |
 |---|---|---|---|---|---|---|
 | graphics/16bit | 178 @ 39.708 | 287 @ 37.603 | 132 @ 40.699 | 62 @ 40.573 | 35 @ 42.345 | 68 @ 42.145 |
 | graphics/g8 | 188 @ 32.794 | 274 @ 33.606 | 169 @ 35.053 | 68 @ 32.715 | 39 @ 35.154 | 78 @ 37.186 |

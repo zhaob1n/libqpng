@@ -3,7 +3,7 @@
 # round 2/2 load 1.30
 
 encode: MB/s of raw bytes (sum raw / sum per-file median), ratio = raw/encoded
-| group | pf-default | pngz-balanced | pfx=default@2.1 | pfx=default@2.2 | pfx=default@2.3 | pfx=default@2.4 | pfx=default@2.5 | pfx=default@2.6 | pfx=default@2.7 | pfx=default@2.8 | pfx=default@2.9 | pfx=default@2.4.0.0.0.1 | pfx=default@2.6.0.0.0.1 | pfx=default@2.9.0.0.0.1 | pfx=default@2.1.0.0.0.3 |
+| group | qpng-default | pngz-balanced | qpng=default@2.1 | qpng=default@2.2 | qpng=default@2.3 | qpng=default@2.4 | qpng=default@2.5 | qpng=default@2.6 | qpng=default@2.7 | qpng=default@2.8 | qpng=default@2.9 | qpng=default@2.4.0.0.0.1 | qpng=default@2.6.0.0.0.1 | qpng=default@2.9.0.0.0.1 | qpng=default@2.1.0.0.0.3 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | graphics/16bit | 351 @ 39.272 | 345 @ 37.603 | 984 @ 23.477 | 809 @ 31.851 | 662 @ 33.388 | 636 @ 36.294 | 566 @ 37.981 | 405 @ 40.674 | 270 @ 40.872 | 113 @ 42.806 | 52 @ 46.764 | 651 @ 36.294 | 420 @ 40.674 | 54 @ 42.815 | 665 @ 11.416 |
 | graphics/g8 | 350 @ 34.830 | 305 @ 33.606 | 963 @ 21.691 | 750 @ 30.398 | 688 @ 32.640 | 618 @ 34.285 | 547 @ 36.747 | 456 @ 37.847 | 292 @ 37.352 | 146 @ 39.185 | 76 @ 40.225 | 629 @ 34.285 | 454 @ 37.847 | 81 @ 38.996 | 987 @ 14.649 |

@@ -17,7 +17,7 @@ MB/s of *raw image bytes* (decoded size) plus compression ratio
 import argparse, collections, csv, io, os, re, statistics as st, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PFBENCH = os.environ.get("PFBENCH", os.path.join(ROOT, "build", "qpngbench"))
+QPNGBENCH = os.environ.get("QPNGBENCH", os.path.join(ROOT, "build", "qpngbench"))
 RSREF = os.environ.get("RSREF", os.path.join(ROOT, "tools/rsref/target/release/rsref"))
 RSREF_Z = os.environ.get("RSREF_ZLIBRS", os.path.join(ROOT, "tools/rsref/target-zlibrs/release/rsref"))
 CORPUS = os.environ.get("QPNG_CORPUS", "/workspace/image-bench/png-next/images/formats")
@@ -31,36 +31,36 @@ ENCODE = {
     "png-high":         [RSREF, "bench-encode", "high", "{R}"],
     "pngz-balanced":    [RSREF_Z, "bench-encode", "balanced", "{R}"],
     "pngz-high":        [RSREF_Z, "bench-encode", "high", "{R}"],
-    "pf-fastest":       [PFBENCH, "encode", "fastest", "{R}"],
-    "pf-fast":          [PFBENCH, "encode", "fast", "{R}"],
-    "pf-default":       [PFBENCH, "encode", "default", "{R}"],
-    "pf-best":          [PFBENCH, "encode", "best", "{R}"],
+    "qpng-fastest":       [QPNGBENCH, "encode", "fastest", "{R}"],
+    "qpng-fast":          [QPNGBENCH, "encode", "fast", "{R}"],
+    "qpng-default":       [QPNGBENCH, "encode", "default", "{R}"],
+    "qpng-best":          [QPNGBENCH, "encode", "best", "{R}"],
     # backend forced (qpng_encode_options.backend)
-    **{f"pf-{p}-{b}": [PFBENCH, "encode", f"{p}#{b}", "{R}"] for p in ("fastest", "fast", "default", "best")
+    **{f"qpng-{p}-{b}": [QPNGBENCH, "encode", f"{p}#{b}", "{R}"] for p in ("fastest", "fast", "default", "best")
        for b in ("ld", "zng")},
     # exploration
-    **{f"pf-u{f}": [PFBENCH, "encode", f"fast:{f}:ultra", "{R}"] for f in (0, 1, 2, 4, 5)},
-    "pf-fast-pf":       [PFBENCH, "encode", "fast:5:pf", "{R}"],
-    **{f"pf-n{n}": [PFBENCH, "encode", f"fast:0:{n}", "{R}"] for n in (1, 2, 3, 4, 5, 6, 7, 8, 9)},
-    "pf-l2":            [PFBENCH, "encode", "fast:5:2", "{R}"],
-    "pf-l4":            [PFBENCH, "encode", "fast:5:4", "{R}"],
+    **{f"qpng-u{f}": [QPNGBENCH, "encode", f"fast:{f}:ultra", "{R}"] for f in (0, 1, 2, 4, 5)},
+    "qpng-fast-qpng":       [QPNGBENCH, "encode", "fast:5:qpng", "{R}"],
+    **{f"qpng-n{n}": [QPNGBENCH, "encode", f"fast:0:{n}", "{R}"] for n in (1, 2, 3, 4, 5, 6, 7, 8, 9)},
+    "qpng-l2":            [QPNGBENCH, "encode", "fast:5:2", "{R}"],
+    "qpng-l4":            [QPNGBENCH, "encode", "fast:5:4", "{R}"],
     # exploration: adaptive filter + libdeflate level N
-    **{f"pf-l{n}": [PFBENCH, "encode", f"fast:5:{n}", "{R}"] for n in (1, 3, 5, 6, 7, 8, 9, 10, 11, 12)},
+    **{f"qpng-l{n}": [QPNGBENCH, "encode", f"fast:5:{n}", "{R}"] for n in (1, 3, 5, 6, 7, 8, 9, 10, 11, 12)},
 }
 DECODE = {
     "imagers":     [RSREF, "bench-decode", "imagers", "{R}"],
     "png-raw":     [RSREF, "bench-decode", "raw", "{R}"],
-    "pf-imagers":  [PFBENCH, "decode", "imagers", "{R}"],
-    "pf-raw":      [PFBENCH, "decode", "raw", "{R}"],
+    "qpng-imagers":  [QPNGBENCH, "decode", "imagers", "{R}"],
+    "qpng-raw":      [QPNGBENCH, "decode", "raw", "{R}"],
 }
 DEFLATE = {
     "fdeflate-ultrafast": [RSREF, "bench-deflate", "ultrafast", "{R}"],
     "fdeflate-rle":       [RSREF, "bench-deflate", "rle", "{R}"],
     "fdeflate-1":         [RSREF, "bench-deflate", "1", "{R}"],
     "fdeflate-6":         [RSREF, "bench-deflate", "6", "{R}"],
-    "pf-rle":             [PFBENCH, "deflate", "pfrle", "{R}"],
-    "pf-fast":            [PFBENCH, "deflate", "pf", "{R}"],
-    "pf-6":               [PFBENCH, "deflate", "6", "{R}"],
+    "qpng-rle":             [QPNGBENCH, "deflate", "qpngrle", "{R}"],
+    "qpng-fast":            [QPNGBENCH, "deflate", "qpng", "{R}"],
+    "qpng-6":               [QPNGBENCH, "deflate", "6", "{R}"],
 }
 
 # optional (only via --configs): previous prototype, to check the cleaned-up decoder for regressions
@@ -69,9 +69,9 @@ EXTRA_DECODE = {"v3-imagers": [V3, "v3", "decode-qpng3", str(3 << 20), "{R}"]}
 
 INFLATE = {
     "fdeflate":        [RSREF, "bench-inflate", "-", "{R}"],
-    "libdeflate":      [PFBENCH, "inflate", "stock", "{R}"],
-    "pf-pairs":        [PFBENCH, "inflate", "pairs", "{R}"],
-    "zlib-ng":         [PFBENCH, "inflate", "zng", "{R}"],
+    "libdeflate":      [QPNGBENCH, "inflate", "stock", "{R}"],
+    "qpng-pairs":        [QPNGBENCH, "inflate", "pairs", "{R}"],
+    "zlib-ng":         [QPNGBENCH, "inflate", "zng", "{R}"],
 }
 STREAMS = os.environ.get("QPNG_STREAMS", "/workspace/deflate-bench/streams/png")
 
@@ -124,8 +124,8 @@ def main():
     if a.mode == "decode":
         table = {**table, **EXTRA_DECODE}
     cfgs = [c for c in (a.configs.split(",") if a.configs else table if a.mode != "decode" else DECODE)]
-    # ad-hoc qpngbench configs: "pfx=PARAM" (e.g. pfx=fast:5:9/4096/258)
-    table = {**table, **{c: [PFBENCH, a.mode, c[4:], "{R}"] for c in cfgs if c.startswith("pfx=")}}
+    # ad-hoc qpngbench configs: "qpng=PARAM" (e.g. qpng=fast:5:9/4096/258)
+    table = {**table, **{c: [QPNGBENCH, a.mode, c[5:], "{R}"] for c in cfgs if c.startswith("qpng=")}}
     if a.mode == "inflate":
         files = sorted(f"{RAWDIR}/png/{f.split('.idat.')[0]}.idat:{STREAMS}/{f}" for f in os.listdir(STREAMS)
                        if f.endswith(".zlib"))
@@ -151,7 +151,7 @@ def main():
     elif a.mode == "deflate":
         raw = {f: os.path.getsize(f) for f in files}
     else:
-        for r in run([PFBENCH, "decode", "raw", "1"], 1, files, a.cpu):
+        for r in run([QPNGBENCH, "decode", "raw", "1"], 1, files, a.cpu):
             raw[r[3]] = int(r[8])
 
     table_merged = set()

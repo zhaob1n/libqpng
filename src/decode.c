@@ -58,12 +58,12 @@ static void process_rows(qpng_dec *c, size_t pos, int final) {
                     }
                 } else if (!final) break;
             }
-            qpng_pair_fn pf = NULL;
+            qpng_pair_fn pair = NULL;
             if (prev && c->pair_ok && y + 1 < c->H && (f == 1 || f == 3 || f == 4)) {
                 if (y + 1 >= ylim) { if (!final) break; }      /* keep the pair together: wait for row y+1 */
-                else if (src[stride] <= 4) pf = qpng__pair_for_bpp(f, src[stride], bpp);
+                else if (src[stride] <= 4) pair = qpng__pair_for_bpp(f, src[stride], bpp);
             }
-            if (pf) { pf(dst, src, prev, dst + stride, src + stride + 1, stride, bpp); prev = dst + stride; y += 2; continue; }
+            if (pair) { pair(dst, src, prev, dst + stride, src + stride + 1, stride, bpp); prev = dst + stride; y += 2; continue; }
             qpng__unfilter_row(f, dst, src, prev, stride, bpp);
             prev = dst; y++;
         }

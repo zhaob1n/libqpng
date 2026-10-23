@@ -8,7 +8,7 @@ endif()
 project(libqpng VERSION 1.2.0 LANGUAGES C)
 
 option(QPNG_BUILD_TESTS "Build tests" ON)
-option(QPNG_BUILD_TOOLS "Build qpng-cli and the benchmark tool" ON)
+option(QPNG_BUILD_TOOLS "Build qpng and the benchmark tool" ON)
 option(QPNG_BUILD_SHARED "Build a shared library (default: static)" OFF)
 option(QPNG_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 option(QPNG_LIBFUZZER "Build libFuzzer fuzz targets (clang)" OFF)
@@ -148,8 +148,9 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/qpng.pc DESTINATION ${CMAKE_INSTALL_LI
 install(EXPORT qpngTargets NAMESPACE qpng:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/qpng)
 
 if(QPNG_BUILD_TOOLS)
-  add_executable(qpng-cli tools/qpng-cli.c)
-  target_link_libraries(qpng-cli PRIVATE qpng)
+  add_executable(qpng_tool tools/qpng.c)   # CLI; binary is named "qpng"
+  set_target_properties(qpng_tool PROPERTIES OUTPUT_NAME qpng)
+  target_link_libraries(qpng_tool PRIVATE qpng)
   add_executable(qpngbench bench/qpngbench.c)
   target_link_libraries(qpngbench PRIVATE qpng_internal)
   target_include_directories(qpngbench PRIVATE src ${LD})   # raw-deflate benchmark uses the vendored libdeflate API

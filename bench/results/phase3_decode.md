@@ -1,6 +1,6 @@
 
 decode: MB/s of raw bytes (sum raw / sum per-file median)
-| group | imagers | pf-imagers | png-raw | pf-raw |
+| group | imagers | qpng-imagers | png-raw | qpng-raw |
 |---|---|---|---|---|
 | graphics/16bit | 817 | 1312 | 1204 | 2133 |
 | graphics/g8 | 288 | 799 | 964 | 1035 |

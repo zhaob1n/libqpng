@@ -168,7 +168,7 @@ Instrumented old encoder (qpng3_enc), photo rgb8 (kodim01/03/05 + cathedral, 20 
   High (31 @ 20.55 vs 15 @ 20.69, -0.7% size) and FASTEST graphics 16-bit speed tie (1905 vs 1912, +42% ratio).
   Forced zlib-ng on photos is 5-10x slower and larger (photo rgb8 DEFAULT 48 vs 489 MB/s) -> libdeflate kept for
   photos and FASTEST/FAST (zng L1/L2 graphics: better ratio, 1.5-3x slower than png-ultra).
-* Decode no-regression (decode.md): ALL pf-imagers 359 vs imagers 252 (phase 3: 389 / 261, load higher now).
+* Decode no-regression (decode.md): ALL qpng-imagers 359 vs imagers 252 (phase 3: 389 / 261, load higher now).
   Inflate: zlib-ng 363 MB/s vs patched libdeflate pairs 570 -> decode stays on libdeflate.
 * 21:50-22:00 ctest ON 7/7, OFF 6/6, sanitize.sh (ASan+UBSan with zlib-ng, portable no-zlib-ng, mutation +
   libFuzzer 30 s each): OK.
@@ -235,3 +235,4 @@ Instrumented old encoder (qpng3_enc), photo rgb8 (kodim01/03/05 + cathedral, 20 
   Streaming vs one-shot: decode image mode x1.01, row mode (zlib-ng inflate) x1.25; encode fastest x1.06 / +0.3 %
   size, fast x1.07 / +0.1 %, default x2.5 / +4.9 %, best x1.9 / +5.6 % (one-shot DEFAULT/BEST choose backend and
   filters per content with whole-image probing; the stream uses zlib-ng 6/9 + per-row adaptive) -> TODO.
+- 2026-10-23: preset labels renamed pf-* -> qpng-*, CLI binary is now `qpng`; scenario chart bench/results/scenarios/ (fresh run, load ~1.2).

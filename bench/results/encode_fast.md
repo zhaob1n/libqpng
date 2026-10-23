@@ -4,7 +4,7 @@
 # round 3/3 load 2.55
 
 encode: MB/s of raw bytes (sum raw / sum per-file median), ratio = raw/encoded
-| group | png-fastest | pf-fastest | png-fast | pf-fast | pf-default |
+| group | png-fastest | qpng-fastest | png-fast | qpng-fast | qpng-default |
 |---|---|---|---|---|---|
 | graphics/16bit | 1390 @ 8.309 | 1023 @ 12.509 | 903 @ 10.968 | 728 @ 28.546 | 163 @ 40.699 |
 | graphics/g8 | 1611 @ 9.729 | 1980 @ 13.571 | 1021 @ 11.795 | 678 @ 29.096 | 201 @ 35.053 |

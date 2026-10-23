@@ -4,7 +4,7 @@
 # round 3/3 load 1.22
 
 decode: MB/s of raw bytes (sum raw / sum per-file median)
-| group | imagers | png-raw | v3-imagers | pf-imagers | pf-raw |
+| group | imagers | png-raw | v3-imagers | qpng-imagers | qpng-raw |
 |---|---|---|---|---|---|
 | graphics/16bit | 778 | 1152 | 948 | 951 | 1279 |
 | graphics/g8 | 264 | 947 | 694 | 733 | 1019 |

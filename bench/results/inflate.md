@@ -4,11 +4,11 @@
 # round 3/3 load 1.24
 
 inflate: MB/s of raw bytes (sum raw / sum per-file median), ratio = raw/encoded
-| group | fdeflate | libdeflate | pf-pairs |
+| group | fdeflate | libdeflate | qpng-pairs |
 |---|---|---|---|
 | stream from fdeflate-1 | 545 | 363 | 609 |
 | stream from fdeflate-ultrafast | 517 | 363 | 564 |
-| stream from libdeflate-pf | 535 | 368 | 588 |
+| stream from libdeflate-qpng | 535 | 368 | 588 |
 | stream from orig | 436 | 356 | 523 |
 | stream from zng6 | 329 | 341 | 432 |
 | ALL | 456 | 358 | 535 |

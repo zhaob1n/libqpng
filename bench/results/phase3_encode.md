@@ -1,6 +1,6 @@
 
 encode: MB/s of raw bytes (sum raw / sum per-file median), ratio = raw/encoded
-| group | png-fastest | pf-fastest | png-fast | pf-fast | png-balanced | pngz-balanced | pf-default | png-high | pngz-high | pf-best |
+| group | png-fastest | qpng-fastest | png-fast | qpng-fast | png-balanced | pngz-balanced | qpng-default | png-high | pngz-high | qpng-best |
 |---|---|---|---|---|---|---|---|---|---|---|
 | graphics/16bit | 1933 @ 8.309 | 1936 @ 11.835 | 1174 @ 10.968 | 1895 @ 11.903 | 184 @ 39.708 | 335 @ 37.603 | 307 @ 39.272 | 69 @ 40.573 | 40 @ 42.345 | 16 @ 45.479 |
 | graphics/g8 | 2091 @ 9.729 | 2973 @ 13.007 | 1335 @ 11.795 | 2582 @ 13.004 | 172 @ 32.794 | 296 @ 33.606 | 342 @ 34.830 | 79 @ 32.715 | 48 @ 35.154 | 110 @ 37.438 |

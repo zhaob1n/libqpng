@@ -1,7 +1,7 @@
 /* qpngbench - qpng side of the benchmark (bench/run.py drives this and tools/rsref).
  *   qpngbench decode raw|expand|imagers REPS file.png...
  *   qpngbench encode PRESET[:FILTER[:LEVEL]] REPS file.png...   (source decoded to raw untimed; same format re-encoded)
- *   qpngbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | pf | pfrle | pfhigh | ultra
+ *   qpngbench deflate LEVEL REPS rawfile...    zlib compress with the vendored libdeflate: 1..12 | qpng | qpngrle | qpnghigh | ultra
  *   qpngbench inflate stock|pairs|zng REPS orig:stream.zlib...   (zng: vendored zlib-ng, if built)
  *   PRESET suffixes (encode): "#ld" / "#zng" force the backend; "@B.L.D.N.M.S" sets QPNG_POLICY (final graphics
  *   stream: backend, level, depth, nice, minlen, strategy) in builds with -DQPNG_POLICY_OVERRIDE.
@@ -49,7 +49,7 @@ static unsigned g_depth, g_nice;   /* deflate op: LEVEL/DEPTH/NICE overrides the
 static int deflate_level(const char *s) {
     const char *sl = strchr(s, '/');
     if (sl) { g_depth = (unsigned)atoi(sl + 1); const char *s2 = strchr(sl + 1, '/'); if (s2) g_nice = (unsigned)atoi(s2 + 1); }
-    return !strcmp(s, "pf") ? LIBDEFLATE_PNG_FAST_LEVEL : !strcmp(s, "pfrle") ? -1 : !strcmp(s, "pfhigh") ? -2 :
+    return !strcmp(s, "qpng") ? LIBDEFLATE_PNG_FAST_LEVEL : !strcmp(s, "qpngrle") ? -1 : !strcmp(s, "qpnghigh") ? -2 :
            !strcmp(s, "ultra") ? -3 : atoi(s);
 }
 

@@ -4,7 +4,7 @@
 # round 3/3 load 1.22
 
 encode: MB/s of raw bytes (sum raw / sum per-file median), ratio = raw/encoded
-| group | png-fastest | png-fast | png-balanced | pngz-balanced | png-high | pngz-high | pf-fastest | pf-fast | pf-default | pf-best | pf-fastest-ld | pf-fast-ld | pf-default-ld | pf-best-ld | pf-fastest-zng | pf-fast-zng | pf-default-zng | pf-best-zng |
+| group | png-fastest | png-fast | png-balanced | pngz-balanced | png-high | pngz-high | qpng-fastest | qpng-fast | qpng-default | qpng-best | qpng-fastest-ld | qpng-fast-ld | qpng-default-ld | qpng-best-ld | qpng-fastest-zng | qpng-fast-zng | qpng-default-zng | qpng-best-zng |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | graphics/16bit | 1912 @ 8.309 | 1181 @ 10.968 | 191 @ 39.708 | 317 @ 37.603 | 67 @ 40.573 | 41 @ 42.345 | 1905 @ 11.835 | 1887 @ 11.903 | 426 @ 40.674 | 96 @ 45.950 | 1921 @ 11.835 | 1882 @ 11.903 | 359 @ 39.272 | 16 @ 45.479 | 1575 @ 21.807 | 941 @ 31.189 | 422 @ 40.674 | 52 @ 46.764 |
 | graphics/g8 | 2146 @ 9.729 | 1329 @ 11.795 | 194 @ 32.794 | 296 @ 33.606 | 75 @ 32.715 | 48 @ 35.154 | 2938 @ 13.007 | 2586 @ 13.004 | 431 @ 37.847 | 109 @ 39.817 | 2975 @ 13.007 | 2487 @ 13.004 | 335 @ 34.830 | 109 @ 37.438 | 1679 @ 20.433 | 855 @ 29.368 | 444 @ 37.847 | 75 @ 40.225 |

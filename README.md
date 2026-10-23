@@ -17,6 +17,15 @@ Other architectures (or `-DQPNG_NO_SIMD`) build portable scalar kernels with ide
   decompression bombs, allocator hooks, fuzz targets, ASan/UBSan script.
 * Output is bit-exact with the png crate / image-rs on PngSuite and a 40-file format corpus (648 checks).
 
+![qpng vs Rust png crate / image-rs, typical scenarios](bench/results/scenarios/scenarios.png)
+
+*Single core, fresh run on 2026-10-23 (`bench/run.py`, 160-file corpus, 3 rounds, box load ~1.1–1.4). Top: decode MB/s
+(qpng is 1.3–2.1× image-rs; 1.45× over all files). Middle: encode MB/s (log scale) for qpng presets vs the png crate's
+matching levels (FASTEST/FAST/DEFAULT/BEST ↔ Fastest/Fast/Balanced/High, plus png with the zlib-rs backend). Bottom: output size
+relative to the png crate at that level. Over all files qpng is 1.7× (FASTEST), 1.7× (FAST), 5.9× (DEFAULT) and 3.4× (BEST)
+faster than the png crate (2.0× / 2.2× vs png (zlib-rs) Balanced / High), with 3–9% smaller files. "Screenshot" = the corpus' `graphics` set. Data: `bench/results/scenarios/`,
+chart: `python3 bench/scenario_chart.py`.*
+
 ## Build
 
 ```sh
@@ -172,7 +181,7 @@ flavours and libdeflate) enforce it. `-DQPNG_HIDE_SYMBOLS=OFF` (or non-ELF platf
 | `tests/` | conformance (vs png crate refs), round trips, API tests, data |
 | `fuzz/` | `fuzz_decode` (+ metadata), `fuzz_roundtrip`, `fuzz_stream` (streaming vs one-shot, APNG) (libFuzzer / AFL++ / standalone mutation driver) |
 | `bench/` | `qpngbench` (C), `run.py` (driver), `results/` |
-| `tools/` | `qpng-cli`, `rsref` (Rust: png crate / image-rs / fdeflate reference + benchmark) |
+| `tools/` | `qpng`, `rsref` (Rust: png crate / image-rs / fdeflate reference + benchmark) |
 | `scripts/` | `sanitize.sh`, `check_symbols.sh`, `gen_libdeflate_patch.sh` |
 
 ## Presets
@@ -252,7 +261,7 @@ decode, inflate; backend sweeps). Phase 3 (libdeflate only) results: `bench/resu
 
 ### Encode, fast presets (png Fastest = Up + fdeflate UltraFast, png Fast = Adaptive + UltraFast)
 
-| group | png-fastest | pf-fastest | png-fast | pf-fast |
+| group | png-fastest | qpng-fastest | png-fast | qpng-fast |
 |---|---|---|---|---|
 | graphics/16bit | 1912 @ 8.309 | 1905 @ 11.835 | 1181 @ 10.968 | 1887 @ 11.903 |
 | graphics/g8 | 2146 @ 9.729 | 2938 @ 13.007 | 1329 @ 11.795 | 2586 @ 13.004 |
@@ -272,7 +281,7 @@ decode, inflate; backend sweeps). Phase 3 (libdeflate only) results: `bench/resu
 
 ### Encode, strong presets (png Balanced = Adaptive + flate2 L6, High = Adaptive + flate2 L9)
 
-| group | png-balanced | pngz-balanced | pf-default | png-high | pngz-high | pf-best |
+| group | png-balanced | pngz-balanced | qpng-default | png-high | pngz-high | qpng-best |
 |---|---|---|---|---|---|---|
 | graphics/16bit | 191 @ 39.708 | 317 @ 37.603 | 426 @ 40.674 | 67 @ 40.573 | 41 @ 42.345 | 96 @ 45.950 |
 | graphics/g8 | 194 @ 32.794 | 296 @ 33.606 | 431 @ 37.847 | 75 @ 32.715 | 48 @ 35.154 | 109 @ 39.817 |
@@ -292,7 +301,7 @@ decode, inflate; backend sweeps). Phase 3 (libdeflate only) results: `bench/resu
 
 ### Encode with the backend forced (`#ld` = QPNG_BACKEND_LIBDEFLATE = qpng 1.0, `#zng` = QPNG_BACKEND_ZLIBNG)
 
-| group | pf-default-ld | pf-default-zng | pf-best-ld | pf-best-zng | pf-fastest-zng | pf-fast-zng |
+| group | qpng-default-ld | qpng-default-zng | qpng-best-ld | qpng-best-zng | qpng-fastest-zng | qpng-fast-zng |
 |---|---|---|---|---|---|---|
 | graphics/16bit | 359 @ 39.272 | 422 @ 40.674 | 16 @ 45.479 | 52 @ 46.764 | 1575 @ 21.807 | 941 @ 31.189 |
 | graphics/g8 | 335 @ 34.830 | 444 @ 37.847 | 109 @ 37.438 | 75 @ 40.225 | 1679 @ 20.433 | 855 @ 29.368 |
@@ -315,10 +324,10 @@ graphics; BEST graphics uses zlib-ng L9 with chain 1024 (between the two BEST co
 
 ### Decode (image-rs API vs qpng IMAGERS output; png crate IDENTITY vs qpng RAW)
 
-Decoder unchanged in 1.1; re-measured as a no-regression check (phase 3 ALL: pf-imagers 389 / imagers 261,
+Decoder unchanged in 1.1; re-measured as a no-regression check (phase 3 ALL: qpng-imagers 389 / imagers 261,
 now 359 / 252 under higher load, same ratio within noise; every group still ahead).
 
-| group | pf-imagers | pf-raw | imagers | png-raw |
+| group | qpng-imagers | qpng-raw | imagers | png-raw |
 |---|---|---|---|---|
 | graphics/16bit | 1403 | 2519 | 972 | 1546 |
 | graphics/g8 | 831 | 1151 | 291 | 1000 |
@@ -338,28 +347,28 @@ now 359 / 252 under higher load, same ratio within noise; every group still ahea
 
 Inflate (MB/s) incl. zlib-ng: libdeflate stays the decoder (patched pair decoding 570 vs zlib-ng 363 MB/s).
 
-| group | libdeflate | pf-pairs | zlib-ng | fdeflate |
+| group | libdeflate | qpng-pairs | zlib-ng | fdeflate |
 |---|---|---|---|---|
 | stream from fdeflate-1 | 383 | 664 | 367 | 517 |
 | stream from fdeflate-ultrafast | 391 | 640 | 379 | 515 |
-| stream from libdeflate-pf | 387 | 643 | 378 | 573 |
+| stream from libdeflate-qpng | 387 | 643 | 378 | 573 |
 | stream from orig | 389 | 553 | 362 | 459 |
 | stream from zng6 | 383 | 426 | 334 | 331 |
 | ALL | 387 | 570 | 363 | 462 |
 
 ### Raw zlib (filtered IDAT data; fdeflate vs qpng's libdeflate)
 
-| group | fdeflate-ultrafast | fdeflate-rle | fdeflate-1 | fdeflate-6 | pf-rle | pf-fast | pf-6 |
+| group | fdeflate-ultrafast | fdeflate-rle | fdeflate-1 | fdeflate-6 | qpng-rle | qpng-fast | qpng-6 |
 |---|---|---|---|---|---|---|---|
 | graphics | 1041 @ 1.805 | 544 @ 2.721 | 281 @ 2.947 | 74 @ 3.561 | 796 @ 2.894 | 618 @ 3.125 | 87 @ 3.638 |
 | photo | 460 @ 1.549 | 399 @ 1.665 | 399 @ 1.665 | 34 @ 1.640 | 672 @ 1.678 | 599 @ 1.678 | 55 @ 1.637 |
 | ALL | 518 @ 1.594 | 422 @ 1.805 | 368 @ 1.824 | 38 @ 1.839 | 693 @ 1.832 | 603 @ 1.849 | 59 @ 1.840 |
 
-| group | fdeflate | libdeflate | pf-pairs |
+| group | fdeflate | libdeflate | qpng-pairs |
 |---|---|---|---|
 | stream from fdeflate-1 | 474 | 350 | 618 |
 | stream from fdeflate-ultrafast | 470 | 357 | 528 |
-| stream from libdeflate-pf | 501 | 370 | 558 |
+| stream from libdeflate-qpng | 501 | 370 | 558 |
 | stream from orig | 403 | 361 | 477 |
 | stream from zng6 | 299 | 362 | 391 |
 | ALL | 415 | 360 | 502 |

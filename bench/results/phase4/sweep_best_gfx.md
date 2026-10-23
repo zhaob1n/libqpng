@@ -3,7 +3,7 @@
 # round 2/2 load 1.25
 
 encode: MB/s of raw bytes (sum raw / sum per-file median), ratio = raw/encoded
-| group | pf-best | pngz-high | png-high | pfx=best@2.9 | pfx=best@2.8 | pfx=best@2.7 | pfx=best@2.9.1024.258 | pfx=best@2.9.0.0.0.1 | pfx=best@2.6 |
+| group | qpng-best | pngz-high | png-high | qpng=best@2.9 | qpng=best@2.8 | qpng=best@2.7 | qpng=best@2.9.1024.258 | qpng=best@2.9.0.0.0.1 | qpng=best@2.6 |
 |---|---|---|---|---|---|---|---|---|---|
 | graphics/16bit | 16 @ 45.479 | 41 @ 42.345 | 67 @ 40.573 | 53 @ 46.764 | 112 @ 42.806 | 230 @ 40.872 | 98 @ 45.950 | 54 @ 42.815 | 418 @ 40.674 |
 | graphics/g8 | 110 @ 37.438 | 48 @ 35.154 | 75 @ 32.715 | 76 @ 40.225 | 136 @ 39.185 | 270 @ 37.352 | 112 @ 39.817 | 84 @ 38.996 | 452 @ 37.847 |

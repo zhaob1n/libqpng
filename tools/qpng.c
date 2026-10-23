@@ -1,7 +1,7 @@
-/* qpng-cli - small command-line front end (also used by the tests).
- *   qpng-cli info IN.png
- *   qpng-cli decode IN.png OUT.raw [raw|expand|imagers] [--adler]   (writes the pixel buffer; prints geometry)
- *   qpng-cli encode IN.png OUT.png [fastest|fast|default|best] [filter 0..5|-1] [level]
+/* qpng - small command-line front end (also used by the tests).
+ *   qpng info IN.png
+ *   qpng decode IN.png OUT.raw [raw|expand|imagers] [--adler]   (writes the pixel buffer; prints geometry)
+ *   qpng encode IN.png OUT.png [fastest|fast|default|best] [filter 0..5|-1] [level]
  *       (IN.png is decoded to raw samples, then re-encoded with the same color type / depth / PLTE / tRNS)
  */
 #include <stdio.h>
