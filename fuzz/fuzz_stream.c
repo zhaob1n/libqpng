@@ -35,18 +35,18 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     qpng_image ref;
     const qpng_status rs = qpng_decode(data, size, &o, &ref);
     /* row mode */
-    rows_t r = { rs == QPNG_OK ? ref.pixels : NULL, rs == QPNG_OK ? ref.stride : 0, rs == QPNG_OK ? ref.size : 0, 0, 0 };
+    rows_t r = { rs == QPNG_OK ? ref.pixels : nullptr, rs == QPNG_OK ? ref.stride : 0, rs == QPNG_OK ? ref.size : 0, 0, 0 };
     qpng_decoder *d;
     if (qpng_decoder_new(&o, on_row, &r, &d) == QPNG_OK) {
         qpng_status s = push_split(d, data, size);
-        if (s == QPNG_OK) s = qpng_decoder_finish(d, NULL);
+        if (s == QPNG_OK) s = qpng_decoder_finish(d, nullptr);
         /* the streaming inflater may accept trailing garbage / data the one-shot path rejects only in edge cases
          * of error classification; pixels must match whenever both succeed */
         if (s == QPNG_OK && rs == QPNG_OK && (r.bad || r.next != ref.height)) __builtin_trap();
         qpng_decoder_free(d);
     }
     /* image mode: identical to qpng_decode */
-    if (qpng_decoder_new(&o, NULL, NULL, &d) == QPNG_OK) {
+    if (qpng_decoder_new(&o, nullptr, nullptr, &d) == QPNG_OK) {
         qpng_status s = push_split(d, data, size);
         qpng_image im;
         if (s == QPNG_OK) {
@@ -65,7 +65,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         for (uint32_t i = 0; i < ai.num_frames && i < 64; i++) {
             if (qpng_apng_next_frame(a, &c, &fi) != QPNG_OK) break;
             qpng_image im;
-            if (qpng_apng_raw_frame(a, i, NULL, &im, &fi) == QPNG_OK) qpng_image_free(&im);
+            if (qpng_apng_raw_frame(a, i, nullptr, &im, &fi) == QPNG_OK) qpng_image_free(&im);
         }
         qpng_apng_free(a);
     }
