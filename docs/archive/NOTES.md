@@ -1,5 +1,7 @@
 # qpng engineering notes (progress log)
 
+> Archived progress log. The code and `docs/dev/` are authoritative.
+
 Box is shared with other agents: all headline numbers are taken with `bench/run.py` (load check, `taskset -c 3`,
 rotating config order per round, per-file medians). Times are CST.
 
