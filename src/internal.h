@@ -5,6 +5,8 @@
 #include "qpng.h"
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdbit.h>
+#include <stdckdint.h>
 #include <string.h>
 #include "qpng_libdeflate.h"
 
@@ -18,13 +20,18 @@
 #  define QPNG_X86 0
 #endif
 
-#define QPNG_INLINE static inline __attribute__((always_inline))
+#define QPNG_INLINE [[gnu::always_inline]] static inline
 
 static inline uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 static inline void wbe32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
 static inline uint32_t ld32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 static inline void st32(void *p, uint32_t v) { memcpy(p, &v, 4); }
 static inline uint64_t ld64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
+static inline void st64(void *p, uint64_t v) { memcpy(p, &v, 8); }
+
+/* Overflow-checked size math (<stdckdint.h>). ckd_* return true on overflow. */
+[[nodiscard]] static inline bool qpng__mul_size(size_t *out, size_t a, size_t b) { return ckd_mul(out, a, b); }
+[[nodiscard]] static inline bool qpng__add_size(size_t *out, size_t a, size_t b) { return ckd_add(out, a, b); }
 
 /* PNG Paeth predictor, branchless (stb_image formulation, == spec). */
 static inline int paeth_s(int a, int b, int c) {
@@ -40,9 +47,35 @@ int qpng__check_ihdr(const uint8_t *ih, uint32_t *W, uint32_t *H, int *depth, in
 int qpng__have_avx2(void);
 
 /* ---- allocator ---- */
-void *qpng__alloc(const qpng_allocator *a, size_t n);
+[[nodiscard]] void *qpng__alloc(const qpng_allocator *a, size_t n);
 void qpng__free(const qpng_allocator *a, void *p);
-void *qpng__realloc_shrink(const qpng_allocator *a, void *p, size_t old_n, size_t new_n);
+[[nodiscard]] void *qpng__realloc_shrink(const qpng_allocator *a, void *p, size_t old_n, size_t new_n);
+
+/* ---- scope-bound release: [[gnu::cleanup]] instead of free()/goto-cleanup ----
+ * Owning locals are declared with a cleanup attribute; error returns just return.
+ * Hand ownership out with QPNG_TAKE / qpng__take (nulls the local so cleanup is a no-op).
+ *
+ *   qpng_owned out = { A, qpng__alloc(A, n) };
+ *   if (!out.p) return QPNG_ERR_NOMEM;
+ *   if (bad) return QPNG_ERR_CHUNK;           // freed here
+ *   im->pixels = qpng__take(&out);            // kept
+ *
+ *   qpng_autofree uint8_t *tmp = malloc(n);   // libc memory (tools, tests)
+ *   return QPNG_TAKE(tmp);
+ *
+ * Cleanups run in reverse declaration order, also on early return; not on longjmp.
+ * Do not take the address of an owner past its scope; do not copy a qpng_owned. */
+#define QPNG_CLEANUP(fn) [[gnu::cleanup(fn)]]
+
+#define QPNG_TAKE(var) ({ typeof(var) qpng__t_ = (var); (var) = nullptr; qpng__t_; })
+
+static inline void qpng__freep(void *pp) { free(*(void **)pp); }
+#define qpng_autofree QPNG_CLEANUP(qpng__freep)
+
+typedef struct { const qpng_allocator *A; void *p; } qpng__owned;
+static inline void qpng__owned_release(qpng__owned *o) { qpng__free(o->A, o->p); o->p = nullptr; }
+#define qpng_owned QPNG_CLEANUP(qpng__owned_release) qpng__owned
+[[nodiscard]] static inline void *qpng__take(qpng__owned *o) { void *p = o->p; o->p = nullptr; return p; }
 
 /* ---- unfilter.c ---- */
 typedef void (*qpng_pair_fn)(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, uint8_t *d1, const uint8_t *s1,
