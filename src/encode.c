@@ -106,6 +106,36 @@ static size_t sample_size(const uint8_t *px, size_t stride, uint32_t h, size_t n
     return qpng__zcompress(&qpng, scratch, off, zbuf, zcap, NULL, st);
 }
 
+
+int qpng__check_encode_opts(const qpng_encode_options o[static 1], uint32_t w, uint32_t h, qpng_color color, int depth) {
+    int ch;
+    switch (color) {
+    case QPNG_COLOR_GRAY: ch = 1; break;
+    case QPNG_COLOR_PALETTE: ch = 1; break;
+    case QPNG_COLOR_GRAY_ALPHA: ch = 2; break;
+    case QPNG_COLOR_RGB: ch = 3; break;
+    case QPNG_COLOR_RGBA: ch = 4; break;
+    default: return QPNG_ERR_ARGUMENT;
+    }
+    const bool sub8 = depth == 1 || depth == 2 || depth == 4;
+    if (!(depth == 8 || (depth == 16 && color != QPNG_COLOR_PALETTE) || (sub8 && ch == 1))) return QPNG_ERR_ARGUMENT;
+    if (!w || !h || w > 0x7FFFFFFFu || h > 0x7FFFFFFFu) return QPNG_ERR_ARGUMENT;
+    if ((color == QPNG_COLOR_PALETTE && !o->palette) || (o->palette && (o->palette_entries < 1 || o->palette_entries > 256)))
+        return QPNG_ERR_ARGUMENT;
+    if (o->trns && (o->trns_bytes < 1 || color == QPNG_COLOR_GRAY_ALPHA || color == QPNG_COLOR_RGBA ||
+                    (color == QPNG_COLOR_GRAY && o->trns_bytes != 2) || (color == QPNG_COLOR_RGB && o->trns_bytes != 6) ||
+                    (color == QPNG_COLOR_PALETTE && o->trns_bytes > o->palette_entries)))
+        return QPNG_ERR_ARGUMENT;
+    if (o->metadata) { qpng_status ms = qpng__meta_validate(o->metadata, color); if (ms != QPNG_OK) return ms; }
+    if (o->backend < QPNG_BACKEND_AUTO || o->backend > QPNG_BACKEND_ZLIBNG || (unsigned)o->preset > QPNG_PRESET_BEST ||
+        o->filter < QPNG_FILTER_AUTO || o->filter > QPNG_FILTER_ADAPTIVE ||
+        o->zlib_strategy < 0 || o->zlib_strategy > QPNG_ZSTRATEGY_RLE ||
+        o->search_depth < 0 || o->search_depth > 65535 || o->nice_length < 0 || o->nice_length > 258)
+        return QPNG_ERR_ARGUMENT;
+    if (!qpng_backend_available((qpng_backend)o->backend)) return QPNG_ERR_UNSUPPORTED;
+    return ch;
+}
+
 qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t stride, qpng_color color, int depth,
                     const qpng_encode_options *opts, uint8_t **outp, size_t *outn) {
     qpng_encode_options defo;

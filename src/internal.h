@@ -43,6 +43,11 @@ static inline int paeth_s(int a, int b, int c) {
 /* ---- decode.c: IHDR validation (13 payload bytes); returns file channels or a negative qpng_status ---- */
 int qpng__check_ihdr(const uint8_t *ih, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace);
 
+/* ---- encode.c: argument / qpng_encode_options validation shared by qpng_encode and qpng_encoder_new;
+ * returns the channel count or a negative qpng_status ---- */
+[[nodiscard]] int qpng__check_encode_opts(const qpng_encode_options o[static 1], uint32_t w, uint32_t h, qpng_color color,
+                                          int depth);
+
 /* ---- CPU features (cached) ---- */
 int qpng__have_avx2(void);
 
