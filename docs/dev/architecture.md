@@ -17,12 +17,14 @@ flowchart LR
   ST --> DB
   M --> META[metadata.c]
   ENC --> META
+  ST --> META
+  AP --> META
 ```
 
 | path | contents |
 |---|---|
 | `include/qpng.h` | public API |
-| `src/internal.h`, `src/common.c` | shared helpers, CPU dispatch, allocators, status strings |
+| `src/internal.h`, `src/common.c` | shared PNG primitives (signature, IHDR, chunk writers, zlib header, predictors), checked sizes, `qpng__grow`, CPU dispatch, allocators, status strings |
 | `src/decode.c` | chunks, limits, fused inflate → unfilter, Adam7 |
 | `src/unfilter.c` | scalar / SSE2 / AVX2 unfilter |
 | `src/expand.c` | output transforms |

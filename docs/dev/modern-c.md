@@ -4,7 +4,7 @@ First-party code targets **GNU C2y** with GCC ≥ 16 and Clang ≥ 23. There is 
 `gnu23` fallback and sources never probe `__STDC_VERSION__` / `__has_include`.
 Dialect is a CMake decision (`qpng_modern_c()`):
 
-`-std=gnu2y -fms-extensions -Wno-microsoft-anon-tag -Wall -Wextra`
+`-std=gnu2y -fms-extensions -Wno-microsoft-anon-tag -Wall -Wextra -Wconversion`
 
 Vendored libdeflate (gnu11, `-w`) and zlib-ng (own flags, `-w`) stay isolated.
 
@@ -51,6 +51,34 @@ C++ / pre-C23 consumers keep working; array-parameter notation stays internal.
 
 ## Warnings
 
-`-Wall -Wextra` must be clean on the supported compilers. `-Wconversion` /
-`-Wsign-conversion` are not enabled yet (~370 diagnostics, mostly
-`src/unfilter.c` uint8_t arithmetic); leave that to module rewrites.
+`-Wall -Wextra -Wconversion` (C: implies `-Wsign-conversion`) must be clean on
+the supported compilers. Write the cast that spells the conversion the
+compiler already did (`(size_t)(2 * ch)`, not `2 * (size_t)ch`) so hot code
+compiles identically; check with `objdump -d` before/after.
+
+## One copy of each PNG primitive
+
+Before adding a helper, look in `src/internal.h` / `src/common.c`:
+
+| need | helper |
+|---|---|
+| signature | `QPNG__SIG` |
+| IHDR parse (+ decode limits) / payload | `qpng__parse_ihdr` / `qpng__put_ihdr` |
+| chunk in a sized buffer / growable buffer | `qpng__put_chunk` / `qpng__wbuf` (`qpng__wb_*`) |
+| zlib CMF/FLG check | `qpng__zlib_hdr_ok` |
+| big-endian fields | `be16` `be32` `wbe16` `wbe32` |
+| grow an array (allocator has no realloc) | `qpng__grow` |
+| encoder option validation | `qpng__check_encode_opts` |
+| scalar / SSE2 Paeth | `qpng__pred`, `paeth_s` / `qpng__paeth_epi16` |
+
+## Scars
+
+* `qpng_zcfg` fields are `int`: narrow fields truncated out-of-range user
+  levels into valid ones before `qpng__zcfg_valid` could see them.
+* Paeth `th` is `(3c - b) - a`: `a` is loop-carried in the unfilter
+  wavefronts, keep it last (Clang reassociates either way, don't rely on it).
+* Unfilter keeps the 4-byte row-tail store (memcpy is slower), an `int` left
+  neighbour in the bpp-1 loops (+2.8 % 8-bit gray) and per-depth palette
+  loops in `expand.c` (constant unpack shifts).
+* Filter values below `QPNG_FILTER_AUTO` (-1) are rejected (master accepted
+  them as AUTO).
