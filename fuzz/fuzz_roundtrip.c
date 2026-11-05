@@ -19,7 +19,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const uint32_t w = 1 + data[1] % 64, h = 1 + data[2] % 64;
     const int knob = data[3], knob2 = data[2] ^ data[0];   /* knob2: backend, zlib strategy */
     data += 4; size -= 4;
-    const size_t rowbytes = ((size_t)w * FMT[f].ch * FMT[f].d + 7) / 8, n = rowbytes * h;
+    const size_t rowbytes = ((size_t)w * (size_t)(FMT[f].ch * FMT[f].d) + 7) / 8, n = rowbytes * h;
     uint8_t *px = malloc(n ? n : 1);
     if (!px) return 0;
     /* pixels: the input repeated (keeps repetitive structure that exercises the match finders) */
@@ -46,7 +46,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     if (FMT[f].c == QPNG_COLOR_PALETTE) { eo.palette = pal; eo.palette_entries = 1 << (FMT[f].d < 8 ? FMT[f].d : 7); }
 
-    uint8_t *png = NULL; size_t pn = 0;
+    uint8_t *png = nullptr; size_t pn = 0;
     if (qpng_encode(px, w, h, 0, FMT[f].c, FMT[f].d, &eo, &png, &pn) != QPNG_OK) abort();
     qpng_decode_options dopt;
     qpng_decode_options_init(&dopt);
@@ -58,7 +58,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     for (uint32_t y = 0; y < h; y++)
         if (memcmp(img.pixels + y * img.stride, px + y * rowbytes, rowbytes)) abort();
     qpng_image_free(&img);
-    qpng_buffer_free(png, NULL);
+    qpng_buffer_free(png, nullptr);
     free(px);
     return 0;
 }

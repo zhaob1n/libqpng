@@ -1,6 +1,6 @@
 # qpng
 
-Fast, small PNG decoder and encoder in C11, built on a vendored and modified
+Fast, small PNG decoder and encoder in modern C (GNU C2y), built on a vendored and modified
 [libdeflate](https://github.com/ebiggers/libdeflate), plus an optional vendored [zlib-ng](https://github.com/zlib-ng/zlib-ng)
 encoder backend for graphics. Single header API, no other dependencies,
 runtime CPU dispatch on x86-64 (SSE2 baseline, AVX2 / BMI2 / AVX-512 where available; never `-march=native`).
@@ -28,8 +28,11 @@ chart: `python3 bench/scenario_chart.py`.*
 
 ## Build
 
+Needs GCC 16 or Clang 23 (`-std=gnu2y`); the public header itself works from C99 and C++17.
+Developer notes: [`docs/dev/modern-c.md`](docs/dev/modern-c.md).
+
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   # -DCMAKE_C_COMPILER=gcc-16 / clang
 cmake --build build -j
 ctest --test-dir build              # api, conformance, roundtrip, metadata, stream, apng, symbols, link_test, fuzz smoke
 cmake --install build --prefix /usr/local   # installs qpng.h, libqpng, qpng.pc, CMake package
@@ -125,7 +128,7 @@ Image mode, interlaced images and libdeflate-only builds buffer the compressed i
 one-shot path once IEND arrived (memory: file + image; image mode is then as fast as `qpng_decode`). The encoder
 compresses FASTEST/FAST with libdeflate's streamed png-ultra (as one-shot) and DEFAULT/BEST with zlib-ng L6/L9
 (png-ultra without zlib-ng); it filters row by row (no whole-image probing), so output can be a bit larger than
-`qpng_encode`'s. Measurements in NOTES.md (Phase 5).
+`qpng_encode`'s. Measurements in docs/archive/NOTES.md (Phase 5).
 
 ### APNG
 
@@ -163,26 +166,9 @@ flavours and libdeflate) enforce it. `-DQPNG_HIDE_SYMBOLS=OFF` (or non-ELF platf
 
 ## Layout
 
-| path | contents |
-|---|---|
-| `include/qpng.h` | public API (versioned, documented) |
-| `src/decode.c` | chunk parsing, limits, fused inflate -> unfilter driver, Adam7 |
-| `src/unfilter.c` | scalar / SSE2 / AVX2 un-filter kernels, 2-row wavefronts, AVX2 quad-Paeth |
-| `src/expand.c` | output transforms (sub-byte unpack, palette / tRNS expansion, 16-bit swap) |
-| `src/filter_enc.c` | encoder filters + fused one-pass adaptive cost (SSE2/AVX2, portable scalar) |
-| `src/encode.c` | validation, presets / content probing, backend policy (`graphics_cfg` / `photo_cfg`), chunk writer |
-| `src/deflate_backend.{c,h}` | the encoder's only deflate interface: libdeflate (levels, png-fast, streamed png-ultra) and zlib-ng |
-| `src/metadata.c` | ancillary chunk reader / writer, limits |
-| `src/stream.c` | `qpng_decoder` (push decoding) and `qpng_encoder` (row-push encoding) |
-| `src/apng.c` | APNG validation, frame iterator / composition, raw frames, `qpng_encode_apng` |
-| `src/common.c` | CPU dispatch, allocator hooks, status strings |
-| `third_party/zlib-ng` | optional, unmodified zlib-ng `develop` f18efb8, native `zng_*` API ([QPNG_VENDOR.md](third_party/zlib-ng/QPNG_VENDOR.md)) |
-| `third_party/libdeflate` | libdeflate v1.26 + qpng changes ([QPNG_CHANGES.md](third_party/libdeflate/QPNG_CHANGES.md), [patch](third_party/libdeflate/qpng-changes.patch)); symbols renamed `qpng_libdeflate_*` |
-| `tests/` | conformance (vs png crate refs), round trips, API tests, data |
-| `fuzz/` | `fuzz_decode` (+ metadata), `fuzz_roundtrip`, `fuzz_stream` (streaming vs one-shot, APNG) (libFuzzer / AFL++ / standalone mutation driver) |
-| `bench/` | `qpngbench` (C), `run.py` (driver), `results/` |
-| `tools/` | `qpng`, `rsref` (Rust: png crate / image-rs / fdeflate reference + benchmark) |
-| `scripts/` | `sanitize.sh`, `check_symbols.sh`, `gen_libdeflate_patch.sh` |
+Source map and data-flow diagram: [`docs/dev/architecture.md`](docs/dev/architecture.md).
+Modern-C rules and scars: [`docs/dev/modern-c.md`](docs/dev/modern-c.md).
+Engineering progress log (archived): [`docs/archive/NOTES.md`](docs/archive/NOTES.md).
 
 ## Presets
 
@@ -199,7 +185,7 @@ flavours and libdeflate) enforce it. `-DQPNG_HIDE_SYMBOLS=OFF` (or non-ELF platf
 
 | backend | what runs |
 |---|---|
-| `QPNG_BACKEND_AUTO` (default) | per preset and content (measured, see NOTES.md "Phase 4"): libdeflate png-ultra for FASTEST/FAST, png-fast / libdeflate L6-L8 for photos, zlib-ng L6 (DEFAULT) / L9 chain 1024 (BEST) for graphics. Without zlib-ng: same as LIBDEFLATE |
+| `QPNG_BACKEND_AUTO` (default) | per preset and content (measured, see docs/archive/NOTES.md "Phase 4"): libdeflate png-ultra for FASTEST/FAST, png-fast / libdeflate L6-L8 for photos, zlib-ng L6 (DEFAULT) / L9 chain 1024 (BEST) for graphics. Without zlib-ng: same as LIBDEFLATE |
 | `QPNG_BACKEND_LIBDEFLATE` | libdeflate only: exactly the qpng 1.0 output |
 | `QPNG_BACKEND_ZLIBNG` | every stream through zlib-ng (FASTEST L1 = deflate_quick, FAST L2, DEFAULT L6, BEST L9; filter probing unchanged); `deflate_level` 1..9 and `zlib_strategy` (FILTERED, HUFFMAN_ONLY, RLE) select explicitly. `QPNG_ERR_UNSUPPORTED` when not built in |
 
@@ -214,18 +200,12 @@ The adaptive filter is the libpng "minimum sum of absolute signed residuals" heu
 
 ## Design notes
 
-* **Decoder**: one allocation for the output; IDAT data is gathered (or used in place when it is a single
-  chunk), inflated into the output buffer offset by a few rows, and the libdeflate progress callback
-  un-filters each finished row band immediately (fused). The litlen table has 12 bits and entries can carry
-  two literals. Avg/Paeth for bpp 1-8 run as 2-row wavefronts to overlap the serial dependency; bpp 3/4 Paeth
-  can process 4 rows at once with AVX2. Format conversion runs one row behind un-filtering.
-* **Encoder**: filtering writes directly into the deflate input; the adaptive filter evaluates all five
-  filters in a single SIMD pass without storing them. png-fast deflate is a single-pass fdeflate-style parser
-  (runs, 8-byte hashed matches, skip-ahead over incompressible regions) that feeds libdeflate's block
-  writer, so every block still gets an optimal dynamic Huffman code. Output goes straight behind the IDAT
-  header; checksums use libdeflate's PCLMUL/AVX-512 CRC-32 and AVX2/VNNI Adler-32.
+See [`docs/dev/architecture.md`](docs/dev/architecture.md). Decoder: fused inflate → unfilter,
+wavefront Paeth/Avg. Encoder: fused SIMD adaptive filter, png-fast / libdeflate / zlib-ng backends.
 
 ## Testing
+
+Details: [`docs/dev/testing.md`](docs/dev/testing.md).
 
 * `ctest`: API (allocator leak accounting, limits, CRC/signature/truncation errors, argument validation, padded
   strides), conformance (PngSuite + formats corpus, 3 output modes, FNV-64 of every output vs png crate /

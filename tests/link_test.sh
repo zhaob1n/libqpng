@@ -22,10 +22,10 @@ if [ ! -f "$W/libdeflate.a" ]; then
   done
   ar rcs "$W/libdeflate.a" "$W"/ld/*.o
 fi
-"$CC" -O2 -I"$ROOT/include" -I"$W/zng" -I"$ROOT/third_party/libdeflate" -DLIBDEFLATE_STATIC \
+"$CC" -std=gnu2y -fms-extensions -Wno-microsoft-anon-tag -Wall -Wextra -O2 -I"$ROOT/include" -I"$W/zng" -I"$ROOT/third_party/libdeflate" -DLIBDEFLATE_STATIC \
       "$ROOT/tests/link_test.c" "$LIB" "$W/zng/libz-ng.a" "$W/libdeflate.a" -o "$W/link_test" -lm
 "$W/link_test"
 # zlib-compat flavour (deflate_medium, crc32_* ... with plain zlib names)
-"$CC" -O2 -I"$ROOT/include" -I"$W/zcompat" -DQPNG_LINK_ZLIB_COMPAT "$ROOT/tests/link_test.c" "$LIB" \
+"$CC" -std=gnu2y -fms-extensions -Wno-microsoft-anon-tag -Wall -Wextra -O2 -I"$ROOT/include" -I"$W/zcompat" -DQPNG_LINK_ZLIB_COMPAT "$ROOT/tests/link_test.c" "$LIB" \
       "$W/zcompat/libz.a" -o "$W/link_test_compat" -lm
 "$W/link_test_compat"

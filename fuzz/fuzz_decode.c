@@ -43,7 +43,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             if (qpng_read_metadata(png, pn, &mo, &r) != QPNG_OK || r.text_count != m.text_count || r.chunk_count != m.chunk_count)
                 __builtin_trap();
             qpng_metadata_free(&r);
-            qpng_buffer_free(png, NULL);
+            qpng_buffer_free(png, nullptr);
         }
         qpng_metadata_free(&m);
     }

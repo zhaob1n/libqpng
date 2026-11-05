@@ -2,7 +2,7 @@
  * (values from the PngSuite documentation), re-encode round trips, limits against compressed bombs, validation.
  * Usage: test_metadata PNGSUITE_DIR [files to re-encode...] */
 #include "qpng.h"
-#include "test_util.h"
+#include "test_common.h"
 static int fails;
 
 static uint8_t *enc(const qpng_metadata *m, qpng_color color, int depth, size_t *pn, qpng_status *st) {
@@ -11,7 +11,7 @@ static uint8_t *enc(const qpng_metadata *m, qpng_color color, int depth, size_t 
     static const uint8_t pal[6] = { 0, 0, 0, 255, 255, 255 };
     qpng_encode_options o; qpng_encode_options_init(&o); o.metadata = m;
     if (color == QPNG_COLOR_PALETTE) { o.palette = pal; o.palette_entries = 2; for (size_t i = 0; i < sizeof px; i++) px[i] &= 1; }
-    uint8_t *png = NULL;
+    uint8_t *png = nullptr;
     *st = qpng_encode(px, 16, 16, 0, color, depth, &o, &png, pn);
     return png;
 }
@@ -22,13 +22,13 @@ static void full_roundtrip(void) {
     static const uint8_t exif[] = { 'M', 'M', 0, 42, 0, 0, 0, 8, 0, 0 };
     static const uint8_t priv[] = { 1, 2, 3 };
     qpng_text tx[4] = {
-        { QPNG_TEXT_TEXT, "Title", "hello", 0, NULL, NULL, 0 },
-        { QPNG_TEXT_ZTXT, "Comment", "compressed compressed compressed", 0, NULL, NULL, 0 },
+        { QPNG_TEXT_TEXT, "Title", "hello", 0, nullptr, nullptr, 0 },
+        { QPNG_TEXT_ZTXT, "Comment", "compressed compressed compressed", 0, nullptr, nullptr, 0 },
         { QPNG_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", 1 },
         { QPNG_TEXT_ITXT, "Author", "x", 0, "", "", 0 } };
     qpng_chunk ch[3] = { { "prVa", QPNG_CHUNK_BEFORE_IDAT, priv, 3 }, { "prVb", QPNG_CHUNK_BEFORE_IDAT, priv, 2 },
-                       { "prVc", QPNG_CHUNK_AFTER_IDAT, NULL, 0 } };
-    qpng_metadata m; memset(&m, 0, sizeof m);
+                       { "prVc", QPNG_CHUNK_AFTER_IDAT, nullptr, 0 } };
+    qpng_metadata m = {};
     m.has_gama = 1; m.gamma = 45455;
     m.has_chrm = 1; for (int i = 0; i < 8; i++) m.chrm[i] = 1000u * (uint32_t)(i + 1);
     m.has_cicp = 1; m.cicp[0] = 9; m.cicp[1] = 16; m.cicp[2] = 0; m.cicp[3] = 1;
@@ -46,9 +46,9 @@ static void full_roundtrip(void) {
     uint8_t *png = enc(&m, QPNG_COLOR_RGB, 8, &pn, &st);
     CHECK(st == QPNG_OK);
     if (st) return;
-    qpng_image im; CHECK(qpng_decode(png, pn, NULL, &im) == QPNG_OK); qpng_image_free(&im);
+    qpng_image im; CHECK(qpng_decode(png, pn, nullptr, &im) == QPNG_OK); qpng_image_free(&im);
     qpng_metadata r;
-    CHECK(qpng_read_metadata(png, pn, NULL, &r) == QPNG_OK);
+    CHECK(qpng_read_metadata(png, pn, nullptr, &r) == QPNG_OK);
     CHECK(r.has_gama && r.gamma == 45455);
     CHECK(r.has_chrm && r.chrm[7] == 8000);
     CHECK(r.has_cicp && r.cicp[1] == 16 && r.cicp[3] == 1);
@@ -76,7 +76,7 @@ static void full_roundtrip(void) {
     /* re-encode from what was read: identical file */
     size_t pn2; uint8_t *png2 = enc(&r, QPNG_COLOR_RGB, 8, &pn2, &st);
     CHECK(st == QPNG_OK && pn2 == pn && !memcmp(png, png2, pn));
-    qpng_buffer_free(png2, NULL);
+    qpng_buffer_free(png2, nullptr);
     /* limits: the ICC profile and the zTXt exceed a 20-byte per-chunk limit */
     qpng_metadata_options mo; qpng_metadata_options_init(&mo); mo.max_chunk_decompressed = 20;
     qpng_metadata r2; CHECK(qpng_read_metadata(png, pn, &mo, &r2) == QPNG_OK);
@@ -87,25 +87,25 @@ static void full_roundtrip(void) {
     qpng_metadata_free(&r2);
     /* corrupt ancillary CRC: chunk skipped, rest intact; allocator hooks: no leaks */
     int gl; const uint8_t *g = find_chunk(png, pn, "gAMA", &gl);
-    CHECK(g != NULL);
+    CHECK(g != nullptr);
     if (g) {
         png[g - png + 1] ^= 1;
-        CHECK(qpng_read_metadata(png, pn, NULL, &r2) == QPNG_OK && !r2.has_gama && r2.skipped == 1 && r2.text_count == 4);
+        CHECK(qpng_read_metadata(png, pn, nullptr, &r2) == QPNG_OK && !r2.has_gama && r2.skipped == 1 && r2.text_count == 4);
         qpng_metadata_free(&r2);
     }
-    qpng_metadata_free(&r); CHECK(r.internal_ == NULL);
-    qpng_buffer_free(png, NULL);
+    qpng_metadata_free(&r); CHECK(r.internal_ == nullptr);
+    qpng_buffer_free(png, nullptr);
     /* validation */
-    qpng_text bad = { QPNG_TEXT_TEXT, "", "x", 0, NULL, NULL, 0 };
-    qpng_metadata v; memset(&v, 0, sizeof v); v.texts = &bad; v.text_count = 1;
-    CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == NULL && st == QPNG_ERR_ARGUMENT);
-    bad.keyword = " lead"; CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == NULL && st == QPNG_ERR_ARGUMENT);
+    qpng_text bad = { QPNG_TEXT_TEXT, "", "x", 0, nullptr, nullptr, 0 };
+    qpng_metadata v = {}; v.texts = &bad; v.text_count = 1;
+    CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
+    bad.keyword = " lead"; CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
     memset(&v, 0, sizeof v); v.has_bkgd = 1; v.bkgd_size = 6;
-    CHECK(enc(&v, QPNG_COLOR_PALETTE, 8, &pn, &st) == NULL && st == QPNG_ERR_ARGUMENT);
+    CHECK(enc(&v, QPNG_COLOR_PALETTE, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
     qpng_chunk crit = { "CRIT", QPNG_CHUNK_BEFORE_IDAT, priv, 3 };
     memset(&v, 0, sizeof v); v.chunks = &crit; v.chunk_count = 1;
-    CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == NULL && st == QPNG_ERR_ARGUMENT);
-    memcpy(crit.type, "tRNS", 4); CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == NULL && st == QPNG_ERR_ARGUMENT);
+    CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
+    memcpy(crit.type, "tRNS", 4); CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
 }
 
 /* zTXt bomb: 64 MiB of 'a' (~64 KiB compressed) must be refused by the default 16 MiB per-chunk limit */
@@ -114,29 +114,29 @@ static void bomb(void) {
     char *s = malloc(big + 1);
     if (!s) return;
     memset(s, 'a', big); s[big] = 0;
-    qpng_text tx = { QPNG_TEXT_ZTXT, "Bomb", s, big, NULL, NULL, 0 };
-    qpng_metadata m; memset(&m, 0, sizeof m); m.texts = &tx; m.text_count = 1;
+    qpng_text tx = { QPNG_TEXT_ZTXT, "Bomb", s, big, nullptr, nullptr, 0 };
+    qpng_metadata m = {}; m.texts = &tx; m.text_count = 1;
     size_t pn; qpng_status st; uint8_t *png = enc(&m, QPNG_COLOR_GRAY, 8, &pn, &st);
     free(s);
     CHECK(st == QPNG_OK && pn < (1u << 20));
     qpng_metadata r;
-    CHECK(qpng_read_metadata(png, pn, NULL, &r) == QPNG_OK && r.text_count == 0 && r.skipped == 1);
+    CHECK(qpng_read_metadata(png, pn, nullptr, &r) == QPNG_OK && r.text_count == 0 && r.skipped == 1);
     qpng_metadata_free(&r);
-    qpng_buffer_free(png, NULL);
+    qpng_buffer_free(png, nullptr);
 }
 
 static qpng_metadata rd(const char *dir, const char *name) {
     char path[4096]; snprintf(path, sizeof path, "%s/%s", dir, name);
-    size_t n; uint8_t *b = slurp(path, &n);
-    qpng_metadata m; memset(&m, 0, sizeof m);
+    size_t n = 0;
+    qpng_tool_autofree uint8_t *b = slurp(path, &n);
+    qpng_metadata m = {};
     if (!b) { fprintf(stderr, "missing %s\n", path); fails++; return m; }
-    CHECK(qpng_read_metadata(b, n, NULL, &m) == QPNG_OK);
-    free(b);
+    CHECK(qpng_read_metadata(b, n, nullptr, &m) == QPNG_OK);
     return m;
 }
 static const qpng_text *text(const qpng_metadata *m, const char *k) {
     for (size_t i = 0; i < m->text_count; i++) if (!strcmp(m->texts[i].keyword, k)) return &m->texts[i];
-    return NULL;
+    return nullptr;
 }
 
 static void pngsuite(const char *dir) {
@@ -169,29 +169,30 @@ static void pngsuite(const char *dir) {
 static void reencode_all(int argc, char **argv) {
     int files = 0;
     for (int i = 2; i < argc; i++) {
-        size_t n; uint8_t *b = slurp(argv[i], &n);
+        size_t n = 0;
+        qpng_tool_autofree uint8_t *b = slurp(argv[i], &n);
         if (!b) continue;
-        qpng_metadata m; qpng_image im;
-        if (qpng_read_metadata(b, n, NULL, &m) != QPNG_OK) { free(b); continue; }
-        if (qpng_decode(b, n, NULL, &im) != QPNG_OK) { qpng_metadata_free(&m); free(b); continue; }
-        int pl = 0, tl = 0; qpng_encode_options o; qpng_encode_options_init(&o);
+        qpng_metadata m = {}; qpng_image im = {};
+        if (qpng_read_metadata(b, n, nullptr, &m) != QPNG_OK) continue;
+        if (qpng_decode(b, n, nullptr, &im) != QPNG_OK) { qpng_metadata_free(&m); continue; }
+        int pl = 0, tl = 0; qpng_encode_options o = {}; qpng_encode_options_init(&o);
         o.palette = find_chunk(b, n, "PLTE", &pl); o.palette_entries = o.palette ? pl / 3 : 0;
-        if (im.color_type != QPNG_COLOR_PALETTE) { o.palette = NULL; o.palette_entries = 0; }
+        if (im.color_type != QPNG_COLOR_PALETTE) { o.palette = nullptr; o.palette_entries = 0; }
         o.trns = find_chunk(b, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;
-        if (im.color_type == QPNG_COLOR_GRAY_ALPHA || im.color_type == QPNG_COLOR_RGBA) { o.trns = NULL; o.trns_bytes = 0; }
+        if (im.color_type == QPNG_COLOR_GRAY_ALPHA || im.color_type == QPNG_COLOR_RGBA) { o.trns = nullptr; o.trns_bytes = 0; }
         o.metadata = &m;
         uint8_t *png; size_t pn;
         qpng_status st = qpng_encode(im.pixels, im.width, im.height, im.stride, (qpng_color)im.color_type, im.bit_depth, &o, &png, &pn);
         if (st == QPNG_OK) {
-            qpng_metadata r; CHECK(qpng_read_metadata(png, pn, NULL, &r) == QPNG_OK);
+            qpng_metadata r; CHECK(qpng_read_metadata(png, pn, nullptr, &r) == QPNG_OK);
             CHECK(r.text_count == m.text_count && r.chunk_count == m.chunk_count && r.has_gama == m.has_gama &&
                   r.gamma == m.gamma && r.has_time == m.has_time && r.exif_size == m.exif_size && r.iccp_size == m.iccp_size &&
                   r.has_bkgd == m.has_bkgd && r.has_sbit == m.has_sbit && r.has_phys == m.has_phys && r.has_chrm == m.has_chrm);
             for (size_t k = 0; k < r.text_count && k < m.text_count; k++)
                 CHECK(r.texts[k].text_size == m.texts[k].text_size && !memcmp(r.texts[k].text, m.texts[k].text, m.texts[k].text_size));
-            qpng_metadata_free(&r); qpng_buffer_free(png, NULL); files++;
+            qpng_metadata_free(&r); qpng_buffer_free(png, nullptr); files++;
         } else if (st != QPNG_ERR_ARGUMENT) { fprintf(stderr, "reencode %s: %s\n", argv[i], qpng_status_string(st)); fails++; }
-        qpng_image_free(&im); qpng_metadata_free(&m); free(b);
+        qpng_image_free(&im); qpng_metadata_free(&m);
     }
     if (argc > 2) CHECK(files > 100);
     printf("metadata: %d files re-encoded with their metadata\n", files);

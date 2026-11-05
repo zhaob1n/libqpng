@@ -13,7 +13,7 @@ static uint8_t *slurp(FILE *f, size_t *n) {
     size_t cap = 1 << 16, len = 0; uint8_t *b = malloc(cap);
     for (size_t r; b && (r = fread(b + len, 1, cap - len, f)) > 0;) {
         len += r;
-        if (len == cap) { uint8_t *nb = realloc(b, cap *= 2); if (!nb) { free(b); return NULL; } b = nb; }
+        if (len == cap) { uint8_t *nb = realloc(b, cap *= 2); if (!nb) { free(b); return nullptr; } b = nb; }
     }
     *n = len; return b;
 }
