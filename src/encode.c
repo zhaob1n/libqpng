@@ -210,7 +210,7 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     uint8_t *p = out;
     memcpy(p, QPNG__SIG, sizeof QPNG__SIG); p += sizeof QPNG__SIG;
     uint8_t ihdr[13];
-    wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color; ihdr[10] = ihdr[11] = ihdr[12] = 0;
+    qpng__put_ihdr(ihdr, w, h, depth, color);
     p = put_chunk(p, "IHDR", ihdr, 13);
     if (mn[0]) { memcpy(p, m.b[0], mn[0]); p += mn[0]; }
     if (opts->palette) p = put_chunk(p, "PLTE", opts->palette, 3u * (uint32_t)opts->palette_entries);

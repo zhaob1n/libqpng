@@ -334,8 +334,8 @@ qpng_status qpng_encode_apng(uint32_t W, uint32_t H, qpng_color color, int depth
     qpng_encode_options eo = *opts;   /* per-frame qpng_encode: payload only, metadata is written here */
     eo.metadata = nullptr;
     QPNG_CLEANUP(qpng__wb_release) qpng__wbuf o = { .A = opts->allocator };
-    uint8_t ih[13] = { [8] = (uint8_t)depth, [9] = (uint8_t)color }, ac[8];
-    wbe32(ih, W); wbe32(ih + 4, H);
+    uint8_t ih[13], ac[8];
+    qpng__put_ihdr(ih, W, H, depth, color);
     wbe32(ac, nf); wbe32(ac + 4, plays);
     qpng__wb_put(&o, QPNG__SIG, sizeof QPNG__SIG);
     qpng__wb_chunk(&o, "IHDR", ih, sizeof ih);

@@ -23,7 +23,7 @@ struct qpng_decoder {
     uint32_t clen, cpos, crc; uint8_t ctype[4];
     uint8_t body[768]; uint32_t nbody;        /* IHDR / PLTE / tRNS payload being assembled */
     /* header */
-    int have_info; qpng_info info; int ich, bpp;
+    int have_info; qpng_info info; int bpp;
     uint8_t plte[768]; uint32_t plen; uint8_t trns[256]; uint32_t tlen; int has_plte, has_trns;
     int seen_idat, idat_done;
     /* BUFFER mode: the whole input */
@@ -101,14 +101,14 @@ static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
         if (in->color_type == 0 && d->tlen < 2) return QPNG_ERR_CHUNK;
         if (in->color_type == 2 && d->tlen < 6) return QPNG_ERR_CHUNK;
     }
-    const int bits = d->ich * in->bit_depth;
+    const int bits = in->channels * in->bit_depth;
     d->bpp = bits >= 8 ? bits / 8 : 1;
     size_t stride;
     if (qpng__mul_size(&stride, in->width, (size_t)bits) || qpng__add_size(&stride, stride, 7)) return QPNG_ERR_LIMITS;
     d->stride = stride / 8;
     d->rs = d->stride + 1;
     int och, odepth, ocolor;
-    qpng__xform_setup(&d->x, in->color_type, in->bit_depth, d->ich, in->width, d->o.output, d->has_plte ? d->plte : nullptr,
+    qpng__xform_setup(&d->x, in->color_type, in->bit_depth, in->channels, in->width, d->o.output, d->has_plte ? d->plte : nullptr,
                     d->plen, d->has_trns ? d->trns : nullptr, d->tlen, &och, &odepth, &ocolor);
     size_t ostride;
     if (qpng__mul_size(&ostride, in->width, (size_t)och * (size_t)odepth) || qpng__add_size(&ostride, ostride, 7))
@@ -183,17 +183,10 @@ static int zlib_hdr_ok(const uint8_t z[static 2]) {
     const uint8_t *t = d->ctype;
     if (!memcmp(t, "IHDR", 4)) {
         if (d->have_info || d->clen != 13) return QPNG_ERR_HEADER;
-        uint32_t W, H; int depth, color, il;
-        int ich = qpng__check_ihdr(d->body, &W, &H, &depth, &color, &il);
-        if (ich < 0) return (qpng_status)ich;
-        const uint32_t maxw = d->o.max_width ? d->o.max_width : (1u << 24), maxh = d->o.max_height ? d->o.max_height : (1u << 24);
-        if (W > maxw || H > maxh) return QPNG_ERR_LIMITS;
-        d->info = (qpng_info){
-            .width = W, .height = H, .bit_depth = (uint8_t)depth, .color_type = (uint8_t)color,
-            .interlaced = (uint8_t)il, .channels = (uint8_t)ich,
-        };
-        d->ich = ich; d->have_info = 1;
-        d->buffered = !d->row_cb || il || !qpng_backend_available(QPNG_BACKEND_ZLIBNG);
+        const qpng_status s = qpng__parse_ihdr(d->body, &d->o, &d->info);
+        if (s) return s;
+        d->have_info = 1;
+        d->buffered = !d->row_cb || d->info.interlaced || !qpng_backend_available(QPNG_BACKEND_ZLIBNG);
     } else if (!d->have_info) {
         return QPNG_ERR_HEADER;
     } else if (!memcmp(t, "IEND", 4)) {
@@ -439,8 +432,8 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
         if (!s) s = qpng__meta_serialize(opts->metadata, 2, e->A, &e->tail, &e->ntail);
     }
     if (!s) {
-        uint8_t ihdr[13] = {};
-        wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color;
+        uint8_t ihdr[13];
+        qpng__put_ihdr(ihdr, w, h, depth, color);
         s = e_out(e, QPNG__SIG, sizeof QPNG__SIG);
         if (!s) s = e_chunk(e, "IHDR", ihdr, 13);
         if (!s) s = e_out(e, m0.p, n0);

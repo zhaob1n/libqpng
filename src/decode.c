@@ -80,36 +80,43 @@ void qpng_decode_options_init(qpng_decode_options *o) {
     *o = (qpng_decode_options){ .output = QPNG_OUTPUT_RAW, .verify_crc = 1 };
 }
 
-/* Signature + IHDR framing + field validation; returns file channels or a negative status. */
-static int read_ihdr(const uint8_t *buf, size_t n, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace) {
-    if (n < 8 + 25 || memcmp(buf, QPNG__SIG, sizeof QPNG__SIG)) return QPNG_ERR_SIGNATURE;
-    if (be32(buf + 8) != 13 || memcmp(buf + 12, "IHDR", 4)) return QPNG_ERR_HEADER;
-    return qpng__check_ihdr(buf + 16, W, H, depth, color, interlace);
+/* channels of a valid (color type, depth) pair, else 0 */
+static int ihdr_channels(int color, int depth) {
+    const bool sub8 = depth == 1 || depth == 2 || depth == 4;
+    switch (color) {
+    case 0: return depth == 8 || depth == 16 || sub8;
+    case 3: return depth == 8 || sub8;
+    case 2: return depth == 8 || depth == 16 ? 3 : 0;
+    case 4: return depth == 8 || depth == 16 ? 2 : 0;
+    case 6: return depth == 8 || depth == 16 ? 4 : 0;
+    default: return 0;
+    }
 }
 
-/* IHDR validation; returns file channels or a negative status */
-int qpng__check_ihdr(const uint8_t *ih, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace) {
-    *W = be32(ih); *H = be32(ih + 4); *depth = ih[8]; *color = ih[9]; *interlace = ih[12];
-    if (!*W || !*H || *W > 0x7FFFFFFFu || *H > 0x7FFFFFFFu || ih[10] || ih[11] || *interlace > 1) return QPNG_ERR_HEADER;
-    switch (*color) {
-    case 0: return (*depth == 1 || *depth == 2 || *depth == 4 || *depth == 8 || *depth == 16) ? 1 : QPNG_ERR_HEADER;
-    case 3: return (*depth == 1 || *depth == 2 || *depth == 4 || *depth == 8) ? 1 : QPNG_ERR_HEADER;
-    case 2: return (*depth == 8 || *depth == 16) ? 3 : QPNG_ERR_HEADER;
-    case 4: return (*depth == 8 || *depth == 16) ? 2 : QPNG_ERR_HEADER;
-    case 6: return (*depth == 8 || *depth == 16) ? 4 : QPNG_ERR_HEADER;
-    default: return QPNG_ERR_HEADER;
-    }
+qpng_status qpng__parse_ihdr(const uint8_t ih[static 13], const qpng_decode_options *o, qpng_info info[static 1]) {
+    const uint32_t W = be32(ih), H = be32(ih + 4);
+    const int ch = ihdr_channels(ih[9], ih[8]);
+    if (!W || !H || W > 0x7FFFFFFFu || H > 0x7FFFFFFFu || ih[10] || ih[11] || ih[12] > 1 || !ch) return QPNG_ERR_HEADER;
+    if (o && (W > (o->max_width ? o->max_width : 1u << 24) || H > (o->max_height ? o->max_height : 1u << 24)))
+        return QPNG_ERR_LIMITS;
+    info->width = W; info->height = H; info->bit_depth = ih[8]; info->color_type = ih[9];
+    info->interlaced = ih[12]; info->channels = (uint8_t)ch;
+    return QPNG_OK;
+}
+
+/* signature + IHDR framing + fields */
+static qpng_status read_ihdr(const uint8_t *buf, size_t n, const qpng_decode_options *o, qpng_info info[static 1]) {
+    if (n < 8 + 25 || memcmp(buf, QPNG__SIG, sizeof QPNG__SIG)) return QPNG_ERR_SIGNATURE;
+    if (be32(buf + 8) != 13 || memcmp(buf + 12, "IHDR", 4)) return QPNG_ERR_HEADER;
+    return qpng__parse_ihdr(buf + 16, o, info);
 }
 
 qpng_status qpng_read_info(const void *png, size_t n, qpng_info *info) {
     const uint8_t *buf = png;
     if (!png || !info) return QPNG_ERR_ARGUMENT;
     *info = (qpng_info){};
-    uint32_t W, H; int depth, color, il;
-    int ich = read_ihdr(buf, n, &W, &H, &depth, &color, &il);
-    if (ich < 0) return (qpng_status)ich;
-    info->width = W; info->height = H; info->bit_depth = (uint8_t)depth; info->color_type = (uint8_t)color;
-    info->interlaced = (uint8_t)il; info->channels = (uint8_t)ich;
+    const qpng_status s = read_ihdr(buf, n, nullptr, info);
+    if (s) return s;
     for (const uint8_t *p = buf + 33, *end = buf + n; p + 12 <= end;) {
         uint32_t len = be32(p);
         if (len > (size_t)(end - p) - 12) break;
@@ -134,14 +141,14 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     if (!opts) { qpng_decode_options_init(&defo); opts = &defo; }
     if ((unsigned)opts->output > QPNG_OUTPUT_IMAGERS) return QPNG_ERR_ARGUMENT;
     const qpng_allocator *A = opts->allocator;
-    const uint32_t maxw = opts->max_width ? opts->max_width : (1u << 24), maxh = opts->max_height ? opts->max_height : (1u << 24);
     const uint64_t maxout = opts->max_output_bytes ? opts->max_output_bytes : (1ull << 30);
 
-    uint32_t W, H; int depth, color, interlace;
-    const int ich = read_ihdr(buf, n, &W, &H, &depth, &color, &interlace);
-    if (ich < 0) return (qpng_status)ich;
+    qpng_info in;
+    const qpng_status hs = read_ihdr(buf, n, opts, &in);
+    if (hs) return hs;
     if (opts->verify_crc && libdeflate_crc32(0, buf + 12, 17) != be32(buf + 29)) return QPNG_ERR_CRC;
-    if (W > maxw || H > maxh) return QPNG_ERR_LIMITS;
+    const uint32_t W = in.width, H = in.height;
+    const int depth = in.bit_depth, color = in.color_type, interlace = in.interlaced, ich = in.channels;
     const int bits = ich * depth, bpp = bits >= 8 ? bits / 8 : 1;
     const size_t stride = ((size_t)W * bits + 7) / 8;
 

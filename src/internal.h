@@ -44,8 +44,13 @@ static inline int paeth_s(int a, int b, int c) {
     return (th <= lo) ? hi : t0;
 }
 
-/* ---- decode.c: IHDR validation (13 payload bytes); returns file channels or a negative qpng_status ---- */
-int qpng__check_ihdr(const uint8_t *ih, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace);
+/* ---- IHDR payload (13 bytes). parse (decode.c) validates and fills the IHDR fields and channels of *info,
+ * leaving the rest untouched; also checks the decode size limits when o is given ---- */
+[[nodiscard]] qpng_status qpng__parse_ihdr(const uint8_t ih[static 13], const qpng_decode_options *o, qpng_info info[static 1]);
+static inline void qpng__put_ihdr(uint8_t ih[static 13], uint32_t w, uint32_t h, int depth, int color) {
+    wbe32(ih, w); wbe32(ih + 4, h);
+    ih[8] = (uint8_t)depth; ih[9] = (uint8_t)color; ih[10] = ih[11] = ih[12] = 0;
+}
 
 /* ---- encode.c: argument / qpng_encode_options validation shared by qpng_encode and qpng_encoder_new;
  * returns the channel count or a negative qpng_status ---- */
