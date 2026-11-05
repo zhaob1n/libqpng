@@ -48,6 +48,20 @@ static inline int paeth_s(int a, int b, int c) {
     int t0 = (hi <= th) ? lo : c;
     return (th <= lo) ? hi : t0;
 }
+/* predictor of PNG filter f (0..4) from left a, up b, upper-left c */
+QPNG_INLINE int qpng__pred(int f, int a, int b, int c) {
+    return f == 0 ? 0 : f == 1 ? a : f == 2 ? b : f == 3 ? (a + b) >> 1 : paeth_s(a, b, c);
+}
+#if QPNG_X86
+/* Paeth predictor on 8 16-bit lanes holding bytes (same formulation as paeth_s) */
+static inline __m128i qpng__paeth_epi16(__m128i a, __m128i b, __m128i c) {
+    const __m128i th = _mm_sub_epi16(_mm_add_epi16(c, _mm_add_epi16(c, c)), _mm_add_epi16(a, b));
+    const __m128i lo = _mm_min_epi16(a, b), hi = _mm_max_epi16(a, b);
+    const __m128i m1 = _mm_cmpgt_epi16(hi, th), m2 = _mm_cmpgt_epi16(th, lo);
+    const __m128i t0 = _mm_or_si128(_mm_and_si128(m1, c), _mm_andnot_si128(m1, lo));
+    return _mm_or_si128(_mm_and_si128(m2, t0), _mm_andnot_si128(m2, hi));
+}
+#endif
 
 /* ---- IHDR payload (13 bytes). parse (decode.c) validates and fills the IHDR fields and channels of *info,
  * leaving the rest untouched; also checks the decode size limits when o is given ---- */

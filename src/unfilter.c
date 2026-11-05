@@ -124,13 +124,7 @@ static void unf_paeth_px(uint8_t *dst, const uint8_t *src, const uint8_t *prev, 
  * All arithmetic in 16-bit lanes (pixel in lanes 0..bpp-1). Raw data sits >= 2 output rows ahead (see unfilter_all),
  * so 4-byte stores past a row end only touch not-yet-written output. */
 static inline __m128i paeth_step(__m128i a, __m128i b, __m128i c, __m128i x) {
-    const __m128i ff = _mm_set1_epi16(0xff);
-    __m128i th = _mm_sub_epi16(_mm_sub_epi16(_mm_add_epi16(c, _mm_add_epi16(c, c)), b), a);
-    __m128i lo = _mm_min_epi16(a, b), hi = _mm_max_epi16(a, b);
-    __m128i m1 = _mm_cmpgt_epi16(hi, th), m2 = _mm_cmpgt_epi16(th, lo);
-    __m128i t0 = _mm_or_si128(_mm_and_si128(m1, c), _mm_andnot_si128(m1, lo));
-    __m128i t1 = _mm_or_si128(_mm_and_si128(m2, t0), _mm_andnot_si128(m2, hi));
-    return _mm_and_si128(_mm_add_epi16(x, t1), ff);
+    return _mm_and_si128(_mm_add_epi16(x, qpng__paeth_epi16(a, b, c)), _mm_set1_epi16(0xff));
 }
 #define STEP(F, a, b, c, x) ((F) == 1 ? _mm_and_si128(_mm_add_epi16(x, a), ff) :                                   \
                              (F) == 3 ? _mm_and_si128(_mm_add_epi16(x, _mm_srli_epi16(_mm_add_epi16(a, b), 1)), ff) : \
@@ -198,23 +192,20 @@ static void pairw_##F0##F1(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, ui
 DEF_PAIRW(1, 1) DEF_PAIRW(1, 3) DEF_PAIRW(1, 4) DEF_PAIRW(3, 1) DEF_PAIRW(3, 3) DEF_PAIRW(3, 4) DEF_PAIRW(4, 1) DEF_PAIRW(4, 3) DEF_PAIRW(4, 4)
 #endif /* QPNG_X86 */
 /* bpp 1/2: scalar two-row wavefront (row y+1 lags row y by one pixel) -> two independent dependency chains */
-QPNG_INLINE int pred_s(int F, int a, int b, int c) {
-    return F == 1 ? a : F == 2 ? b : F == 3 ? (a + b) >> 1 : paeth_s(a, b, c);
-}
 #define DEF_PAIRS(B, F0, F1)                                                                                      \
 static void pairs##B##_##F0##F1(uint8_t *restrict d0, const uint8_t *restrict s0, const uint8_t *restrict p0,     \
                                 uint8_t *restrict d1, const uint8_t *restrict s1, size_t n, int bpp) {            \
     (void)bpp; size_t i;                                                                                          \
-    for (i = 0; i < B; i++) { d0[i] = s0[i] + pred_s(F0, 0, p0[i], 0); d1[i] = s1[i] + pred_s(F1, 0, d0[i], 0); } \
+    for (i = 0; i < B; i++) { d0[i] = s0[i] + qpng__pred(F0, 0, p0[i], 0); d1[i] = s1[i] + qpng__pred(F1, 0, d0[i], 0); } \
     if (B == 1) {                                                                                                 \
         int a0 = d0[0], c0 = p0[0], a1 = d1[0], c1 = d0[0];                                                       \
         for (; i < n; i++) {                                                                                      \
-            int b0 = p0[i]; a0 = (uint8_t)(s0[i] + pred_s(F0, a0, b0, c0)); c0 = b0; d0[i] = (uint8_t)a0;        \
-            a1 = (uint8_t)(s1[i] + pred_s(F1, a1, a0, c1)); c1 = a0; d1[i] = (uint8_t)a1;                        \
+            int b0 = p0[i]; a0 = (uint8_t)(s0[i] + qpng__pred(F0, a0, b0, c0)); c0 = b0; d0[i] = (uint8_t)a0;        \
+            a1 = (uint8_t)(s1[i] + qpng__pred(F1, a1, a0, c1)); c1 = a0; d1[i] = (uint8_t)a1;                        \
         }                                                                                                         \
     } else for (; i < n; i++) {                                                                                   \
-        d0[i] = s0[i] + pred_s(F0, d0[i - B], p0[i], p0[i - B]);                                                  \
-        d1[i] = s1[i] + pred_s(F1, d1[i - B], d0[i], d0[i - B]);                                                  \
+        d0[i] = s0[i] + qpng__pred(F0, d0[i - B], p0[i], p0[i - B]);                                                  \
+        d1[i] = s1[i] + qpng__pred(F1, d1[i - B], d0[i], d0[i - B]);                                                  \
     }                                                                                                             \
 }
 #define DEF_PAIRS_B(B) DEF_PAIRS(B,1,1) DEF_PAIRS(B,1,3) DEF_PAIRS(B,1,4) DEF_PAIRS(B,3,1) DEF_PAIRS(B,3,3) \
