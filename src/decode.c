@@ -132,6 +132,44 @@ static inline void qpng__free_decompressorp(struct libdeflate_decompressor **dp)
     if (*dp) libdeflate_free_decompressor(*dp);
 }
 
+/* Adam7: unfilter each pass row into a 2-row ping-pong buffer (rb), transform to output pixels, scatter into ob.
+ * Kept out of qpng_decode: the short pass rows make per-row overhead visible, and the caller's cleanup-owned
+ * locals cost registers across the per-row calls (-5..15% on interlaced 8-bit gray / palette). */
+static qpng_status adam7(const qpng_xform *x, const uint8_t *raw, uint8_t *ob, uint8_t *rb, uint32_t W, uint32_t H,
+                         int bits, int bpp, size_t stride, size_t ostride, int obits) {
+    const int opx = obits >= 8 ? obits / 8 : 0;
+    uint8_t *rows[2] = { rb, rb + stride + 32 }, *trow = rb + 2 * (stride + 32);
+    const uint8_t *q = raw;
+    for (int ps = 0; ps < 7; ps++) {
+        uint32_t x0 = A7[ps][0], y0 = A7[ps][1], dx = A7[ps][2], dy = A7[ps][3];
+        if (W <= x0 || H <= y0) continue;
+        uint32_t pw = (W - x0 + dx - 1) / dx, ph = (H - y0 + dy - 1) / dy;
+        size_t pst = ((size_t)pw * (size_t)bits + 7) / 8;
+        const uint8_t *prev = nullptr;
+        for (uint32_t j = 0; j < ph; j++, q += pst + 1) {
+            int f = q[0]; if (f > 4) return QPNG_ERR_FILTER;
+            uint8_t *cur = rows[j & 1];
+            qpng__unfilter_row(f, cur, q + 1, prev, pst, bpp);
+            prev = cur;
+            const uint8_t *px = cur;
+            if (x->xf == XF_SWAP16) { memcpy(trow, cur, pst); qpng__swap16(trow, pst); px = trow; }
+            else if (x->xf != XF_NONE) { qpng__xform_row(x, cur, trow, pw); px = trow; }
+            uint8_t *orow = ob + (size_t)(y0 + j * dy) * ostride;
+            if (opx) {
+#define SC(N) for (uint32_t i = 0; i < pw; i++) memcpy(orow + (size_t)(x0 + i * dx) * N, px + (size_t)i * N, N); break;
+                switch (opx) { case 1: SC(1) case 2: SC(2) case 3: SC(3) case 4: SC(4) case 6: SC(6) case 8: SC(8) default: SC((size_t)opx) }
+#undef SC
+            } else {   /* raw sub-8-bit output: bit scatter (MSB first) */
+                for (uint32_t i = 0; i < pw; i++) {
+                    uint32_t v = qpng__unpack(px, i, obits), bit = (x0 + i * dx) * (uint32_t)obits;
+                    orow[bit >> 3] |= (uint8_t)(v << ((uint32_t)(8 - obits) - (bit & 7)));
+                }
+            }
+        }
+    }
+    return QPNG_OK;
+}
+
 qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *opts, qpng_image *im) {
     const uint8_t *buf = png;
     qpng_decode_options defo;
@@ -255,41 +293,10 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
         if (opts->verify_adler && c.adler != be32(z + 2 + ain)) return QPNG_ERR_ADLER;
     } else {
         if (opts->verify_adler && libdeflate_adler32(1, out.p, rawn) != be32(z + 2 + ain)) return QPNG_ERR_ADLER;
-        /* Adam7: unfilter each pass row into a 2-row ping-pong buffer, transform to output pixels, scatter */
-        const int obits = och * odepth, opx = obits >= 8 ? obits / 8 : 0;
-        size_t rb_cap = 2 * (stride + 32) + ostride + 32;
-        rb.p = qpng__alloc(A, rb_cap);
+        rb.p = qpng__alloc(A, 2 * (stride + 32) + ostride + 32);
         if (!rb.p) return QPNG_ERR_NOMEM;
-        uint8_t *rbp = rb.p;
-        uint8_t *rows[2] = { rbp, rbp + stride + 32 }, *trow = rbp + 2 * (stride + 32);
-        const uint8_t *q = out.p;
-        for (int ps = 0; ps < 7; ps++) {
-            uint32_t x0 = A7[ps][0], y0 = A7[ps][1], dx = A7[ps][2], dy = A7[ps][3];
-            if (W <= x0 || H <= y0) continue;
-            uint32_t pw = (W - x0 + dx - 1) / dx, ph = (H - y0 + dy - 1) / dy;
-            size_t pst = ((size_t)pw * (size_t)bits + 7) / 8;
-            const uint8_t *prev = nullptr;
-            for (uint32_t j = 0; j < ph; j++, q += pst + 1) {
-                int f = q[0]; if (f > 4) return QPNG_ERR_FILTER;
-                uint8_t *cur = rows[j & 1];
-                qpng__unfilter_row(f, cur, q + 1, prev, pst, bpp);
-                prev = cur;
-                const uint8_t *px = cur;
-                if (c.x.xf == XF_SWAP16) { memcpy(trow, cur, pst); qpng__swap16(trow, pst); px = trow; }
-                else if (c.x.xf != XF_NONE) { qpng__xform_row(&c.x, cur, trow, pw); px = trow; }
-                uint8_t *orow = (uint8_t *)obuf.p + (size_t)(y0 + j * dy) * ostride;
-                if (opx) {
-#define SC(N) for (uint32_t i = 0; i < pw; i++) memcpy(orow + (size_t)(x0 + i * dx) * N, px + (size_t)i * N, N); break;
-                    switch (opx) { case 1: SC(1) case 2: SC(2) case 3: SC(3) case 4: SC(4) case 6: SC(6) case 8: SC(8) default: SC((size_t)opx) }
-#undef SC
-                } else {   /* raw sub-8-bit output: bit scatter (MSB first) */
-                    for (uint32_t i = 0; i < pw; i++) {
-                        uint32_t v = qpng__unpack(px, i, obits), bit = (x0 + i * dx) * (uint32_t)obits;
-                        orow[bit >> 3] |= (uint8_t)(v << ((uint32_t)(8 - obits) - (bit & 7)));
-                    }
-                }
-            }
-        }
+        const qpng_status as = adam7(&c.x, out.p, obuf.p, rb.p, W, H, bits, bpp, stride, ostride, och * odepth);
+        if (as) return as;
     }
     if (sep) {
         im->pixels = qpng__take(&obuf);
