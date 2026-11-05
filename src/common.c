@@ -52,7 +52,7 @@ const char *qpng_status_string(qpng_status s) {
 
 void *qpng__grow(const qpng_allocator *a, void *p, size_t n, size_t cap[static 1], size_t need, size_t el, size_t first) {
     if (need <= *cap) return p;
-    size_t nc = *cap ? *cap : (first > need ? first : need), bytes;
+    size_t nc = *cap ? *cap : first ? first : need, bytes;
     while (nc < need) if (qpng__mul_size(&nc, nc, 2)) return nullptr;
     if (qpng__mul_size(&bytes, nc, el)) return nullptr;
     void *np = qpng__alloc(a, bytes);
