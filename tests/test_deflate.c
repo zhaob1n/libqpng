@@ -5,25 +5,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qpng_libdeflate.h"
+#include "../tools/util.h"
 #ifdef QPNG_TEST_ZLIB
 #include <zlib.h>
 #endif
 
 static int check(const char *what, const unsigned char *in, size_t n, const unsigned char *z, size_t zn) {
-    unsigned char *b = malloc(n + 1);
+    qpng_tool_autofree unsigned char *b = malloc(n + 1);
     size_t got = 0; int bad = 0;
     struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
     if (libdeflate_deflate_decompress(d, z, zn, b, n, &got) || got != n || memcmp(b, in, n)) bad |= 1;
     libdeflate_free_decompressor(d);
 #ifdef QPNG_TEST_ZLIB
-    z_stream s; memset(&s, 0, sizeof s);
+    z_stream s = {};
     inflateInit2(&s, -15);
     s.next_in = (unsigned char *)z; s.avail_in = (uInt)zn; s.next_out = b; s.avail_out = (uInt)n + 1;
     if (inflate(&s, Z_FINISH) != Z_STREAM_END || s.total_out != n || memcmp(b, in, n)) bad |= 2;
     inflateEnd(&s);
 #endif
     if (bad) fprintf(stderr, "FAIL %s n=%zu (%s)\n", what, n, bad & 2 ? "zlib" : "libdeflate");
-    free(b);
     return bad != 0;
 }
 
@@ -47,7 +47,8 @@ int main(void) {
     for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++)
         for (int kind = 0; kind < 4; kind++) {
             size_t n = sizes[si];
-            unsigned char *in = malloc(n + 1), *z = malloc(n + n / 8 + 4096);
+            qpng_tool_autofree unsigned char *in = malloc(n + 1);
+            qpng_tool_autofree unsigned char *z = malloc(n + n / 8 + 4096);
             gen(in + 1, n, kind, (unsigned)(si * 7 + kind));
             for (size_t li = 0; li < sizeof levels / sizeof *levels; li++) {
                 int lv = levels[li];
@@ -55,7 +56,7 @@ int main(void) {
                                                                               : lv >= 1000 ? lv - 1000 : lv);
                 if (lv < 0) libdeflate_set_png_min_match(c, 0);
                 if (lv >= 1000) { libdeflate_set_search_params(c, 48, 96); libdeflate_set_min_match_len(c, 3); }
-                size_t bound = libdeflate_deflate_compress_bound(NULL, n);
+                size_t bound = libdeflate_deflate_compress_bound(nullptr, n);
                 size_t zn = libdeflate_deflate_compress(c, in + 1, n, z, bound);
                 char what[64]; snprintf(what, sizeof what, "level %d kind %d", lv, kind);
                 runs++;
@@ -78,7 +79,6 @@ int main(void) {
                 }
                 libdeflate_free_compressor(c);
             }
-            free(in); free(z);
         }
     printf("deflate: %d streams, %d failures\n", runs, fails);
     return fails != 0;
