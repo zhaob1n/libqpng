@@ -10,13 +10,6 @@ void qpng_encode_options_init(qpng_encode_options *o) {
 
 void qpng_buffer_free(void *buf, const qpng_allocator *a) { qpng__free(a, buf); }
 
-static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uint32_t len) {
-    wbe32(p, len); memcpy(p + 4, type, 4);
-    if (data && len) memcpy(p + 8, data, len);
-    wbe32(p + 8 + len, libdeflate_crc32(0, p + 4, len + 4));
-    return p + 12 + len;
-}
-
 /*
  * Presets (measured choices; see NOTES.md and README "Presets"):
  *  FASTEST  Up filter + png-ultra (single pass, runs only, sampled Huffman codes), streamed in row chunks.
@@ -211,10 +204,10 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     memcpy(p, QPNG__SIG, sizeof QPNG__SIG); p += sizeof QPNG__SIG;
     uint8_t ihdr[13];
     qpng__put_ihdr(ihdr, w, h, depth, color);
-    p = put_chunk(p, "IHDR", ihdr, 13);
+    p = qpng__put_chunk(p, "IHDR", ihdr, 13);
     if (mn[0]) { memcpy(p, m.b[0], mn[0]); p += mn[0]; }
-    if (opts->palette) p = put_chunk(p, "PLTE", opts->palette, 3u * (uint32_t)opts->palette_entries);
-    if (opts->trns) p = put_chunk(p, "tRNS", opts->trns, (uint32_t)opts->trns_bytes);
+    if (opts->palette) p = qpng__put_chunk(p, "PLTE", opts->palette, 3u * (uint32_t)opts->palette_entries);
+    if (opts->trns) p = qpng__put_chunk(p, "tRNS", opts->trns, (uint32_t)opts->trns_bytes);
     if (mn[1]) { memcpy(p, m.b[1], mn[1]); p += mn[1]; }
     /* single IDAT (bound < 1 GiB): compress in place behind the IDAT header. Otherwise compress to the end of the
      * buffer and lay the chunks out in front of the data. */
@@ -289,11 +282,11 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     for (size_t done = 0; done < zn;) {
         uint32_t len = (uint32_t)((zn - done) < 0x40000000u ? zn - done : 0x40000000u);
         if (p + 8 != z + done) memmove(p + 8, z + done, len);   /* p + 8 <= z + done always holds: chunks only add 12-byte overhead */
-        p = put_chunk(p, "IDAT", nullptr, len);
+        p = qpng__put_chunk(p, "IDAT", nullptr, len);
         done += len;
     }
     if (mn[2]) { memcpy(p, m.b[2], mn[2]); p += mn[2]; }
-    p = put_chunk(p, "IEND", nullptr, 0);
+    p = qpng__put_chunk(p, "IEND", nullptr, 0);
     *outn = (size_t)(p - out);
     *outp = qpng__realloc_shrink(A, qpng__take(&out_), cap, *outn);
     return QPNG_OK;

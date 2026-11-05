@@ -311,7 +311,7 @@ struct qpng_encoder {
     qpng_zstream *z;
     uint8_t *rows; uint32_t nrows, max_rows;   /* rows[0] = previous row, then pending source rows */
     uint8_t *filt;                /* filtered batch (1 byte lookback in front) */
-    uint8_t *idat; size_t nidat;  /* IDAT payload being collected */
+    uint8_t *idat; size_t nidat;  /* IDAT chunk being collected: payload at idat + 8, framed in place */
     uint8_t *tail; size_t ntail;  /* metadata after IDAT */
     qpng_status err; int finished, big;
     size_t sunk;                  /* compressed bytes produced (hybrid filter decision) */
@@ -320,21 +320,11 @@ struct qpng_encoder {
 [[nodiscard]] static qpng_status e_out(qpng_encoder *e, const uint8_t *p, size_t n) {
     return n && e->write(e->user, p, n) ? QPNG_ERR_ABORTED : QPNG_OK;
 }
-[[nodiscard]] static qpng_status e_chunk(qpng_encoder *e, const char *type, const uint8_t *p, size_t n) {
-    uint8_t h[8], c[4];
-    wbe32(h, (uint32_t)n); memcpy(h + 4, type, 4);
-    uint32_t crc = libdeflate_crc32(0, h + 4, 4);
-    if (n) crc = libdeflate_crc32(crc, p, n);   /* libdeflate_crc32(x, nullptr, 0) returns 0, not x */
-    wbe32(c, crc);
-    qpng_status s = e_out(e, h, 8);
-    if (!s) s = e_out(e, p, n);
-    if (!s) s = e_out(e, c, 4);
-    return s;
-}
 [[nodiscard]] static qpng_status e_flush_idat(qpng_encoder *e) {
-    qpng_status s = e->nidat ? e_chunk(e, "IDAT", e->idat, e->nidat) : QPNG_OK;
+    if (!e->nidat) return QPNG_OK;
+    const uint8_t *end = qpng__put_chunk(e->idat, "IDAT", nullptr, (uint32_t)e->nidat);
     e->nidat = 0;
-    return s;
+    return e_out(e, e->idat, (size_t)(end - e->idat));
 }
 /* qpng_zsink: compressed bytes -> IDAT chunks */
 [[nodiscard]] static qpng_status e_sink(void *ctx, const uint8_t *p, size_t n) {
@@ -342,7 +332,7 @@ struct qpng_encoder {
     e->sunk += n;
     while (n) {
         size_t k = E_IDAT_MAX - e->nidat < n ? E_IDAT_MAX - e->nidat : n;
-        memcpy(e->idat + e->nidat, p, k); e->nidat += k; p += k; n -= k;
+        memcpy(e->idat + 8 + e->nidat, p, k); e->nidat += k; p += k; n -= k;
         if (e->nidat == E_IDAT_MAX) { qpng_status s = e_flush_idat(e); if (s) return s; }
     }
     return QPNG_OK;
@@ -418,29 +408,27 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
         else {
             e->rows = qpng__alloc(e->A, rows_n);
             e->filt = qpng__alloc(e->A, filt_n);
-            e->idat = qpng__alloc(e->A, E_IDAT_MAX);
+            e->idat = qpng__alloc(e->A, 12 + E_IDAT_MAX);
             if (!e->rows || !e->filt || !e->idat) s = QPNG_ERR_NOMEM;
         }
     }
     if (!s) { memset(e->rows, 0, n); memset(e->filt, 0, 1); e->z = qpng__zstream_new(&zc, e->A, e_sink, e, &s); }
-    /* signature, IHDR, metadata (before PLTE), PLTE, tRNS, metadata (before IDAT) */
-    qpng_owned m0 = { .A = e->A }, m1 = { .A = e->A };
-    size_t n0 = 0, n1 = 0;
-    if (!s && opts->metadata) {
-        s = qpng__meta_serialize(opts->metadata, 0, e->A, (uint8_t **)&m0.p, &n0);
-        if (!s) s = qpng__meta_serialize(opts->metadata, 1, e->A, (uint8_t **)&m1.p, &n1);
-        if (!s) s = qpng__meta_serialize(opts->metadata, 2, e->A, &e->tail, &e->ntail);
+    if (s) return s;
+    if (opts->metadata) {
+        s = qpng__meta_serialize(opts->metadata, 2, e->A, &e->tail, &e->ntail);
+        if (s) return s;
     }
-    if (!s) {
-        uint8_t ihdr[13];
-        qpng__put_ihdr(ihdr, w, h, depth, color);
-        s = e_out(e, QPNG__SIG, sizeof QPNG__SIG);
-        if (!s) s = e_chunk(e, "IHDR", ihdr, 13);
-        if (!s) s = e_out(e, m0.p, n0);
-        if (!s && opts->palette) s = e_chunk(e, "PLTE", opts->palette, 3u * (size_t)opts->palette_entries);
-        if (!s && opts->trns) s = e_chunk(e, "tRNS", opts->trns, (size_t)opts->trns_bytes);
-        if (!s) s = e_out(e, m1.p, n1);
-    }
+    /* signature, IHDR, metadata (before PLTE), PLTE, tRNS, metadata (before IDAT): one write */
+    QPNG_CLEANUP(qpng__wb_release) qpng__wbuf hd = { .A = e->A };
+    uint8_t ihdr[13];
+    qpng__put_ihdr(ihdr, w, h, depth, color);
+    qpng__wb_put(&hd, QPNG__SIG, sizeof QPNG__SIG);
+    qpng__wb_chunk(&hd, "IHDR", ihdr, sizeof ihdr);
+    if (opts->metadata) qpng__meta_write(&hd, opts->metadata, 0);
+    if (opts->palette) qpng__wb_chunk(&hd, "PLTE", opts->palette, 3u * (size_t)opts->palette_entries);
+    if (opts->trns) qpng__wb_chunk(&hd, "tRNS", opts->trns, (size_t)opts->trns_bytes);
+    if (opts->metadata) qpng__meta_write(&hd, opts->metadata, 1);
+    s = hd.err ? hd.err : e_out(e, hd.p, hd.n);
     if (s) return s;
     *out = QPNG_TAKE(e);
     return QPNG_OK;
@@ -486,7 +474,8 @@ qpng_status qpng_encoder_finish(qpng_encoder *e) {
     qpng_status s = e_compress(e, 1);
     if (!s) s = e_flush_idat(e);
     if (!s) s = e_out(e, e->tail, e->ntail);
-    if (!s) s = e_chunk(e, "IEND", nullptr, 0);
+    uint8_t iend[12];
+    if (!s) s = e_out(e, iend, (size_t)(qpng__put_chunk(iend, "IEND", nullptr, 0) - iend));
     e->finished = 1;
     return s ? (e->err = s) : QPNG_OK;
 }

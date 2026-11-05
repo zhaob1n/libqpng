@@ -91,6 +91,25 @@ static inline void qpng__owned_release(qpng__owned *o) { qpng__free(o->A, o->p);
 #define qpng_owned QPNG_CLEANUP(qpng__owned_release) qpng__owned
 [[nodiscard]] static inline void *qpng__take(qpng__owned *o) { void *p = o->p; o->p = nullptr; return p; }
 
+/* ---- PNG chunk writers (common.c) ---- */
+/* Frame len bytes already at p + 8 (data == nullptr) or copied from data: length, type, CRC. Returns the chunk end. */
+static inline uint8_t *qpng__put_chunk(uint8_t *p, const char type[static 4], const uint8_t *data, uint32_t len) {
+    wbe32(p, len); memcpy(p + 4, type, 4);
+    if (data && len) memcpy(p + 8, data, len);
+    wbe32(p + 8 + len, libdeflate_crc32(0, p + 4, (size_t)len + 4));
+    return p + 12 + len;
+}
+/* Growable output buffer (allocator A) that frames PNG chunks. The first error sticks and turns every later write
+ * into a no-op, so writers check `err` once at the end; on error the caller frees `p`. */
+typedef struct { uint8_t *p; size_t n, cap; const qpng_allocator *A; qpng_status err; } qpng__wbuf;
+static inline void qpng__wb_release(qpng__wbuf *w) { qpng__free(w->A, w->p); w->p = nullptr; }
+void qpng__wb_put(qpng__wbuf *w, const void *d, size_t n);
+/* chunk framing: begin writes the length placeholder and type, end patches the length and appends the CRC */
+[[nodiscard]] size_t qpng__wb_begin(qpng__wbuf *w, const char type[static 4]);
+void qpng__wb_end(qpng__wbuf *w, size_t start);
+void qpng__wb_chunk(qpng__wbuf *w, const char type[static 4], const void *d, size_t n);
+
+
 /* ---- unfilter.c ---- */
 typedef void (*qpng_pair_fn)(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, uint8_t *d1, const uint8_t *s1,
                            size_t n, int bpp);
