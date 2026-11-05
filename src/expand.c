@@ -36,13 +36,18 @@ void qpng__xform_row(const qpng_xform *c, const uint8_t *s, uint8_t *o, uint32_t
     const int d = c->depth;
     switch (c->xf) {
     case XF_PAL:
+        /* d==8 is the hot LUT path; keep 1/2/4 as separate loops so unpack shifts stay constant. */
         if (c->alpha) {
             if (d == 8) for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[s[i]]);
-            else for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[qpng__unpack(s, i, d)]);
+            else if (d == 4) for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[qpng__unpack(s, i, 4)]);
+            else if (d == 2) for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[qpng__unpack(s, i, 2)]);
+            else for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[qpng__unpack(s, i, 1)]);
         } else {
             uint32_t i = 0;
             if (d == 8) for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[s[i]]);
-            else for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, d)]);
+            else if (d == 4) for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 4)]);
+            else if (d == 2) for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 2)]);
+            else for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 1)]);
             if (i < w) { uint32_t v = c->lut[d == 8 ? s[i] : qpng__unpack(s, i, d)]; memcpy(o + 3 * i, &v, 3); }
         }
         break;
