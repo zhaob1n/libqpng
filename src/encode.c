@@ -35,6 +35,12 @@ static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uin
  */
 #define GRAPHICS_RATIO 6
 
+/* serialised ancillary chunks per location (before PLTE, before IDAT, after IDAT) */
+typedef struct { const qpng_allocator *A; uint8_t *b[3]; size_t n[3]; } meta_chunks;
+static void meta_release(meta_chunks *m) {
+    for (int l = 0; l < 3; l++) { qpng__free(m->A, m->b[l]); m->b[l] = nullptr; }
+}
+
 /* content class from the probe, used by the backend policy */
 typedef struct { int best, alpha, depth, bpp, filter_none; } qpng_content;
 
@@ -106,7 +112,6 @@ static size_t sample_size(const uint8_t *px, size_t stride, uint32_t h, size_t n
     return qpng__zcompress(&qpng, scratch, off, zbuf, zcap, NULL, st);
 }
 
-
 int qpng__check_encode_opts(const qpng_encode_options o[static 1], uint32_t w, uint32_t h, qpng_color color, int depth) {
     int ch;
     switch (color) {
@@ -172,37 +177,38 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     if (!qpng__zcfg_valid(&explicit_cfg)) return QPNG_ERR_ARGUMENT;
 
     const int stream = !probe && !zng && level == QPNG_DEFLATE_PNGULTRA;
-    uint8_t *filt = NULL;
+    qpng_owned filt = { A, nullptr };
     if (!stream) {
-        filt = qpng__alloc(A, rawn + 64);
-        if (!filt) return QPNG_ERR_NOMEM;
-        if (!probe) qpng__filter_image(filt, pixels, stride, h, rowbytes, bpp, filter);   /* probe: filtered below */
+        filt.p = qpng__alloc(A, rawn + 64);
+        if (!filt.p) return QPNG_ERR_NOMEM;
+        if (!probe) qpng__filter_image(filt.p, pixels, stride, h, rowbytes, bpp, filter);   /* probe: filtered below */
     }
 
     /* worst-case bound over all compression levels */
     const size_t zcap = qpng__zbound(rawn);
     const size_t nchunks = zcap / 0x40000000u + 1;   /* IDAT chunks are split at 1 GiB */
     /* ancillary chunks, serialised up front (sizes needed for the output bound) */
-    uint8_t *mb[3] = { NULL, NULL, NULL }; size_t mn[3] = { 0, 0, 0 };
-    if (opts->metadata) {
-        qpng_status ms = QPNG_OK;
-        for (int l = 0; l < 3 && ms == QPNG_OK; l++) ms = qpng__meta_serialize(opts->metadata, l, A, &mb[l], &mn[l]);
-        if (ms != QPNG_OK) { for (int l = 0; l < 3; l++) qpng__free(A, mb[l]); qpng__free(A, filt); return ms; }
+    QPNG_CLEANUP(meta_release) meta_chunks m = { .A = A };
+    const size_t *mn = m.n;
+    for (int l = 0; opts->metadata && l < 3; l++) {
+        qpng_status ms = qpng__meta_serialize(opts->metadata, l, A, &m.b[l], &m.n[l]);
+        if (ms != QPNG_OK) return ms;
     }
     const size_t cap = 8 + 25 + (opts->palette ? 12 + 3 * (size_t)opts->palette_entries : 0) +
                        (opts->trns ? 12 + (size_t)opts->trns_bytes : 0) + 12 * nchunks + zcap + 12 + mn[0] + mn[1] + mn[2];
-    uint8_t *out = qpng__alloc(A, cap);
-    if (!out) { for (int l = 0; l < 3; l++) qpng__free(A, mb[l]); qpng__free(A, filt); return QPNG_ERR_NOMEM; }
+    qpng_owned out_ = { A, qpng__alloc(A, cap) };
+    uint8_t *const out = out_.p;
+    if (!out) return QPNG_ERR_NOMEM;
     static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
     uint8_t *p = out;
     memcpy(p, sig, 8); p += 8;
     uint8_t ihdr[13];
     wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color; ihdr[10] = ihdr[11] = ihdr[12] = 0;
     p = put_chunk(p, "IHDR", ihdr, 13);
-    if (mn[0]) { memcpy(p, mb[0], mn[0]); p += mn[0]; }
+    if (mn[0]) { memcpy(p, m.b[0], mn[0]); p += mn[0]; }
     if (opts->palette) p = put_chunk(p, "PLTE", opts->palette, 3u * (uint32_t)opts->palette_entries);
     if (opts->trns) p = put_chunk(p, "tRNS", opts->trns, (uint32_t)opts->trns_bytes);
-    if (mn[1]) { memcpy(p, mb[1], mn[1]); p += mn[1]; }
+    if (mn[1]) { memcpy(p, m.b[1], mn[1]); p += mn[1]; }
     /* single IDAT (bound < 1 GiB): compress in place behind the IDAT header. Otherwise compress to the end of the
      * buffer and lay the chunks out in front of the data. */
     uint8_t *z = nchunks == 1 ? p + 8 : out + cap - zcap - 12;
@@ -212,23 +218,22 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
         zn = qpng__zcompress_ultra_rows(pixels, stride, h, rowbytes, bpp, filter, opts->filter < 0 && !opts->deflate_level,
                                       z, zcap, A, &st);
     } else if (!probe) {
-        zn = qpng__zcompress(&explicit_cfg, filt, rawn, z, zcap, A, &st);
+        zn = qpng__zcompress(&explicit_cfg, filt.p, rawn, z, zcap, A, &st);
     } else {
         /* 1. content probe on a row sample (Up-biased adaptive filter, png-fast): ratio >= GRAPHICS_RATIO = graphics */
         const int best = opts->preset == QPNG_PRESET_BEST;
         const int alpha = color == QPNG_COLOR_GRAY_ALPHA || color == QPNG_COLOR_RGBA;
         const int gfx_filter = alpha ? QPNG__FILTER_ADAPTIVE_GFX : QPNG__FILTER_ADAPTIVE_FLAT;   /* probe + trial filter */
-        size_t sraw = 0, sz = sample_size(pixels, stride, h, rowbytes, bpp, gfx_filter, filt, z, zcap,
+        size_t sraw = 0, sz = sample_size(pixels, stride, h, rowbytes, bpp, gfx_filter, filt.p, z, zcap,
                                             &sraw, &st);
         const int graphics = sz && (double)sraw >= (double)sz * GRAPHICS_RATIO;
         qpng_content cc = { best, alpha, depth, bpp, 0 };
         const qpng_zcfg qpng = qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, QPNG_DEFLATE_QPNG, 0, 0, 0, 0);
-        uint8_t *tmp = NULL;
-        zn = sz ? 1 : 0;   /* "no error so far" until a stream exists */
-        if (zn && (best || zng || !graphics)) {
-            tmp = qpng__alloc(A, zcap);
-            if (!tmp) { st = QPNG_ERR_NOMEM; zn = 0; }
-        }
+        if (!sz) return st != QPNG_OK ? st : QPNG_ERR_ENCODE;
+        qpng_owned tmp_ = { A, best || zng || !graphics ? qpng__alloc(A, zcap) : nullptr };
+        uint8_t *const tmp = tmp_.p;
+        if (!tmp && (best || zng || !graphics)) return QPNG_ERR_NOMEM;
+        zn = 1;   /* "no error so far" until a stream exists */
         /* 2. filter choice. Graphics without alpha: filter None often wins (sample decides); alpha graphics:
          *    adaptive always won in the corpus. Photos: png-fast stream with adaptive filtering; 8-bit palette
          *    photos also try Paeth everywhere (full trial, smaller stream kept). */
@@ -236,59 +241,54 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
         if (zn && graphics) {
             if (!alpha) {
                 size_t nraw, gz = sz;   /* the probe sample already used this filter */
-                size_t nz = sample_size(pixels, stride, h, rowbytes, bpp, QPNG_FILTER_NONE, filt, z, zcap, &nraw, &st);
+                size_t nz = sample_size(pixels, stride, h, rowbytes, bpp, QPNG_FILTER_NONE, filt.p, z, zcap, &nraw, &st);
                 if (!nz) zn = 0;
                 /* the row sample cuts the long-range matches None relies on (text, repeated UI elements): give
                  * None a 4% allowance at depth <= 8 (16-bit samples are large enough; measured on the corpus) */
                 else if (depth <= 8 ? nz * 100 <= gz * 104 : nz < gz) f = QPNG_FILTER_NONE;
             }
             cc.filter_none = f == QPNG_FILTER_NONE;
-            if (zn) qpng__filter_image(filt, pixels, stride, h, rowbytes, bpp, f);
+            if (zn) qpng__filter_image(filt.p, pixels, stride, h, rowbytes, bpp, f);
         } else if (zn && !graphics) {
-            qpng__filter_image(filt, pixels, stride, h, rowbytes, bpp, QPNG_FILTER_ADAPTIVE);
-            zn = qpng__zcompress(&qpng, filt, rawn, z, zcap, A, &st);
+            qpng__filter_image(filt.p, pixels, stride, h, rowbytes, bpp, QPNG_FILTER_ADAPTIVE);
+            zn = qpng__zcompress(&qpng, filt.p, rawn, z, zcap, A, &st);
             if (zn && color == QPNG_COLOR_PALETTE && depth == 8) {
-                uint8_t *alt = qpng__alloc(A, rawn + 64);
-                if (!alt) { st = QPNG_ERR_NOMEM; zn = 0; }
-                else {
-                    qpng__filter_image(alt, pixels, stride, h, rowbytes, bpp, QPNG_FILTER_PAETH);
-                    size_t an = qpng__zcompress(&qpng, alt, rawn, tmp, zcap, A, &st);
-                    if (!an) zn = 0;
-                    else if (an < zn) { uint8_t *t = filt; filt = alt; alt = t; memcpy(z, tmp, an); zn = an; }
-                    qpng__free(A, alt);
-                }
+                qpng_owned alt = { A, qpng__alloc(A, rawn + 64) };
+                if (!alt.p) return QPNG_ERR_NOMEM;
+                qpng__filter_image(alt.p, pixels, stride, h, rowbytes, bpp, QPNG_FILTER_PAETH);
+                size_t an = qpng__zcompress(&qpng, alt.p, rawn, tmp, zcap, A, &st);
+                if (!an) zn = 0;
+                else if (an < zn) { void *t = filt.p; filt.p = alt.p; alt.p = t; memcpy(z, tmp, an); zn = an; }
             }
         }
         /* 3. final compression of the chosen filtering (policy: graphics_cfg / photo_cfg) */
         if (zn && graphics) {
             const qpng_zcfg g = graphics_cfg(&cc, backend, opts->deflate_level, opts->zlib_strategy, opts->search_depth,
                                            opts->nice_length);
-            zn = qpng__zcompress(&g, filt, rawn, z, zcap, A, &st);
+            zn = qpng__zcompress(&g, filt.p, rawn, z, zcap, A, &st);
         } else if (zn) {
             /* photos: the png-fast stream in z is kept if the second stream is not smaller (zlib-ng forced: replaced) */
             const qpng_zcfg ph = photo_cfg(&cc, backend, opts->deflate_level, opts->zlib_strategy, opts->search_depth,
                                          opts->nice_length);
             if (ph.level) {
-                size_t an = qpng__zcompress(&ph, filt, rawn, tmp, zcap, A, &st);
+                size_t an = qpng__zcompress(&ph, filt.p, rawn, tmp, zcap, A, &st);
                 if (!an) zn = 0;
                 else if (an < zn || zng) { memcpy(z, tmp, an); zn = an; }
             }
         }
-        qpng__free(A, tmp);
     }
-    qpng__free(A, filt);
-    if (!zn) { for (int l = 0; l < 3; l++) qpng__free(A, mb[l]); qpng__free(A, out); return st != QPNG_OK ? st : QPNG_ERR_ENCODE; }
+    qpng__owned_release(&filt);   /* the largest buffer: before the IDAT layout touches more pages */
+    if (!zn) return st != QPNG_OK ? st : QPNG_ERR_ENCODE;
     for (size_t done = 0; done < zn;) {
         uint32_t len = (uint32_t)((zn - done) < 0x40000000u ? zn - done : 0x40000000u);
         if (p + 8 != z + done) memmove(p + 8, z + done, len);   /* p + 8 <= z + done always holds: chunks only add 12-byte overhead */
         p = put_chunk(p, "IDAT", NULL, len);
         done += len;
     }
-    if (mn[2]) { memcpy(p, mb[2], mn[2]); p += mn[2]; }
-    for (int l = 0; l < 3; l++) qpng__free(A, mb[l]);
+    if (mn[2]) { memcpy(p, m.b[2], mn[2]); p += mn[2]; }
     p = put_chunk(p, "IEND", NULL, 0);
     *outn = (size_t)(p - out);
-    *outp = qpng__realloc_shrink(A, out, cap, *outn);
+    *outp = qpng__realloc_shrink(A, qpng__take(&out_), cap, *outn);
     return QPNG_OK;
 }
 
