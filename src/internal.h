@@ -24,6 +24,8 @@
 
 static inline uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 static inline void wbe32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
+static inline uint16_t be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
+static inline void wbe16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
 static inline uint32_t ld32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 static inline void st32(void *p, uint32_t v) { memcpy(p, &v, 4); }
 static inline uint64_t ld64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
