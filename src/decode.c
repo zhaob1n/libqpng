@@ -80,11 +80,9 @@ void qpng_decode_options_init(qpng_decode_options *o) {
     *o = (qpng_decode_options){ .output = QPNG_OUTPUT_RAW, .verify_crc = 1 };
 }
 
-constexpr uint8_t PNG_SIG[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
-
 /* Signature + IHDR framing + field validation; returns file channels or a negative status. */
 static int read_ihdr(const uint8_t *buf, size_t n, uint32_t *W, uint32_t *H, int *depth, int *color, int *interlace) {
-    if (n < 8 + 25 || memcmp(buf, PNG_SIG, 8)) return QPNG_ERR_SIGNATURE;
+    if (n < 8 + 25 || memcmp(buf, QPNG__SIG, sizeof QPNG__SIG)) return QPNG_ERR_SIGNATURE;
     if (be32(buf + 8) != 13 || memcmp(buf + 12, "IHDR", 4)) return QPNG_ERR_HEADER;
     return qpng__check_ihdr(buf + 16, W, H, depth, color, interlace);
 }

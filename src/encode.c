@@ -207,9 +207,8 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     qpng_owned out_ = { A, qpng__alloc(A, cap) };
     uint8_t *const out = out_.p;
     if (!out) return QPNG_ERR_NOMEM;
-    static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
     uint8_t *p = out;
-    memcpy(p, sig, 8); p += 8;
+    memcpy(p, QPNG__SIG, sizeof QPNG__SIG); p += sizeof QPNG__SIG;
     uint8_t ihdr[13];
     wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color; ihdr[10] = ihdr[11] = ihdr[12] = 0;
     p = put_chunk(p, "IHDR", ihdr, 13);

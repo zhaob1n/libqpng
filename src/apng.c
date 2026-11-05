@@ -54,7 +54,7 @@ static qpng_status build_head(qpng_apng *a) {
     a->headn = 8 + 25 + (a->plte ? 12 + a->plen : 0) + (a->trns ? 12 + a->tlen : 0);
     uint8_t *p = a->head = qpng__alloc(aA(a), a->headn);
     if (!p) return QPNG_ERR_NOMEM;
-    memcpy(p, a->png, 8);
+    memcpy(p, QPNG__SIG, sizeof QPNG__SIG);
     p = raw_chunk(p + 8, "IHDR", a->png + 16, 13);
     if (a->plte) p = raw_chunk(p, "PLTE", a->plte, a->plen);
     if (a->trns) raw_chunk(p, "tRNS", a->trns, a->tlen);
@@ -334,11 +334,10 @@ qpng_status qpng_encode_apng(uint32_t W, uint32_t H, qpng_color color, int depth
     qpng_encode_options eo = *opts;   /* per-frame qpng_encode: payload only, metadata is written here */
     eo.metadata = nullptr;
     QPNG_CLEANUP(qpng__wb_release) qpng__wbuf o = { .A = opts->allocator };
-    static constexpr uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
     uint8_t ih[13] = { [8] = (uint8_t)depth, [9] = (uint8_t)color }, ac[8];
     wbe32(ih, W); wbe32(ih + 4, H);
     wbe32(ac, nf); wbe32(ac + 4, plays);
-    qpng__wb_put(&o, sig, sizeof sig);
+    qpng__wb_put(&o, QPNG__SIG, sizeof QPNG__SIG);
     qpng__wb_chunk(&o, "IHDR", ih, sizeof ih);
     qpng__wb_chunk(&o, "acTL", ac, sizeof ac);
     if (meta) qpng__meta_write(&o, meta, 0);

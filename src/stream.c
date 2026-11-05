@@ -11,8 +11,6 @@
 #include "deflate_backend.h"
 #include "metadata.h"
 
-static constexpr uint8_t QPNG_PNG_SIG[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
-
 /* ================================================= decoder ================================================= */
 enum { D_SIG, D_LEN, D_BODY, D_CRC, D_END, D_ERR };
 
@@ -221,7 +219,7 @@ qpng_status qpng_decoder_push(qpng_decoder *d, const void *data, size_t n) {
     if (d->state != D_END && (!d->have_info || d->buffered) && !keep_all(d, p, n)) return d_fail(d, QPNG_ERR_NOMEM);
     while (n && d->state != D_END) {
         if (d->state == D_SIG) {
-            while (n && d->nfix < 8) { if (*p != QPNG_PNG_SIG[d->nfix]) return d_fail(d, QPNG_ERR_SIGNATURE); d->nfix++; p++; n--; }
+            while (n && d->nfix < 8) { if (*p != QPNG__SIG[d->nfix]) return d_fail(d, QPNG_ERR_SIGNATURE); d->nfix++; p++; n--; }
             if (d->nfix == 8) { d->state = D_LEN; d->nfix = 0; }
         } else if (d->state == D_LEN) {
             while (n && d->nfix < 8) { d->fix[d->nfix++] = *p++; n--; }
@@ -443,7 +441,7 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
     if (!s) {
         uint8_t ihdr[13] = {};
         wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color;
-        s = e_out(e, QPNG_PNG_SIG, 8);
+        s = e_out(e, QPNG__SIG, sizeof QPNG__SIG);
         if (!s) s = e_chunk(e, "IHDR", ihdr, 13);
         if (!s) s = e_out(e, m0.p, n0);
         if (!s && opts->palette) s = e_chunk(e, "PLTE", opts->palette, 3u * (size_t)opts->palette_entries);
