@@ -33,7 +33,7 @@ static uint8_t *put_chunk(uint8_t *p, const char *type, const uint8_t *data, uin
  * Backend choice per stream: graphics_cfg / photo_cfg (deflate_backend.h); qpng_encode_options.backend forces one.
  * An explicit filter or deflate_level in qpng_encode_options disables the probing.
  */
-#define GRAPHICS_RATIO 6
+static constexpr int GRAPHICS_RATIO = 6;
 
 /* serialised ancillary chunks per location (before PLTE, before IDAT, after IDAT) */
 typedef struct { const qpng_allocator *A; uint8_t *b[3]; size_t n[3]; } meta_chunks;
@@ -51,43 +51,49 @@ typedef struct { int best, alpha, depth, bpp, filter_none; } qpng_content;
  */
 static qpng_zcfg graphics_cfg(const qpng_content *c, int backend, int zlevel, int zstrategy, int depth, int nice) {
     if (backend == QPNG_BACKEND_ZLIBNG)
-        return qpng__zcfg(QPNG_BACKEND_ZLIBNG, zlevel ? zlevel : c->best ? 9 : 6, depth, nice, 0, zstrategy);
+        return (qpng_zcfg){ .backend = QPNG_BACKEND_ZLIBNG, .level = zlevel ? zlevel : c->best ? 9 : 6,
+                            .depth = depth, .nice = nice, .strategy = zstrategy };
 #ifdef QPNG_POLICY_OVERRIDE   /* development: QPNG_POLICY="b:level:depth:nice:minlen:strategy" for the final graphics stream */
     { const char *e = getenv("QPNG_POLICY"); int v[6] = { 0 };
       if (e && sscanf(e, "%d:%d:%d:%d:%d:%d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) >= 2)
-          return qpng__zcfg(v[0], v[1], v[2], v[3], v[4], v[5]); }
+          return (qpng_zcfg){ .backend = v[0], .level = v[1], .depth = v[2], .nice = v[3], .minlen = v[4],
+                              .strategy = v[5] }; }
 #endif
     if (backend == QPNG_BACKEND_AUTO && qpng__backend_available(QPNG_BACKEND_ZLIBNG)) {
         /* zlib-ng on the probed filtering (Phase 4 sweep, 40 graphics files, core 3, medians): level 6
          * (deflate_medium) is smaller than every libdeflate 4-8 setting below AND 1.1-1.3x faster on 5 of 7 groups;
          * level 9 with chain 1024 (default 4096) keeps ~98% of level 9's gain at 2x its speed and beats the
          * libdeflate near-optimal L10 in speed (2-5x) at -1..+6% size. */
-        return c->best ? qpng__zcfg(QPNG_BACKEND_ZLIBNG, 9, 1024, 258, 0, QPNG_ZSTRATEGY_DEFAULT)
-                       : qpng__zcfg(QPNG_BACKEND_ZLIBNG, 6, 0, 0, 0, QPNG_ZSTRATEGY_DEFAULT);
+        return c->best ? (qpng_zcfg){ .backend = QPNG_BACKEND_ZLIBNG, .level = 9, .depth = 1024, .nice = 258 }
+                       : (qpng_zcfg){ .backend = QPNG_BACKEND_ZLIBNG, .level = 6 };
     }
     /* libdeflate only (QPNG_BACKEND_LIBDEFLATE or built without zlib-ng): qpng 1.0 policy */
     if (!c->best) {
         /* alpha 8-bit: lazy2 + long matches; None-filtered 8-bit RGB (flat UI, text = long exact repeats): greedy;
          * other RGB: shallower search; rest: level 5 */
-        if (c->alpha && c->depth == 8) return qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 8, 48, 258, 3, 0);
+        if (c->alpha && c->depth == 8)
+            return (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 8, .depth = 48, .nice = 258, .minlen = 3 };
         if (!c->alpha && c->bpp >= 3)
-            return c->filter_none && c->depth == 8 ? qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 4, 4, 16, 3, 0)
-                                                   : qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 5, 8, 32, 3, 0);
-        return qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 5, 0, 0, 3, 0);
+            return c->filter_none && c->depth == 8
+                       ? (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 4, .depth = 4, .nice = 16, .minlen = 3 }
+                       : (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 5, .depth = 8, .nice = 32, .minlen = 3 };
+        return (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 5, .minlen = 3 };
     }
     /* BEST: bounded near-optimal for alpha / 16-bit, else level 9 */
-    return c->alpha || c->depth == 16 ? qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 10, 48, 96, 3, 0)
-                                      : qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 9, 0, 0, 3, 0);
+    return c->alpha || c->depth == 16
+               ? (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 10, .depth = 48, .nice = 96, .minlen = 3 }
+               : (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 9, .minlen = 3 };
 }
 
 /* photos: second stream to try against the png-fast one (level 0 = none). BEST: level 8 (L10 is 2x slower for
  * ~1.5%; L8 already beats zlib-rs 9); DEFAULT 16-bit: level 6 (png-fast is weakest on noisy low bytes). */
 static qpng_zcfg photo_cfg(const qpng_content *c, int backend, int zlevel, int zstrategy, int depth, int nice) {
     if (backend == QPNG_BACKEND_ZLIBNG)
-        return qpng__zcfg(QPNG_BACKEND_ZLIBNG, zlevel ? zlevel : c->best ? 9 : 6, depth, nice, 0, zstrategy);
-    if (c->best) return qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 8, 0, 0, 0, 0);
-    if (c->depth == 16) return qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 6, 0, 0, 0, 0);
-    return qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, 0, 0, 0, 0, 0);
+        return (qpng_zcfg){ .backend = QPNG_BACKEND_ZLIBNG, .level = zlevel ? zlevel : c->best ? 9 : 6,
+                            .depth = depth, .nice = nice, .strategy = zstrategy };
+    if (c->best) return (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 8 };
+    if (c->depth == 16) return (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 6 };
+    return (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE };
 }
 
 /*
@@ -108,8 +114,8 @@ static size_t sample_size(const uint8_t *px, size_t stride, uint32_t h, size_t n
         off += (size_t)k * row;
     }
     *raw = off;
-    const qpng_zcfg qpng = qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, QPNG_DEFLATE_QPNG, 0, 0, 0, 0);
-    return qpng__zcompress(&qpng, scratch, off, zbuf, zcap, NULL, st);
+    const qpng_zcfg qpng = (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = QPNG_DEFLATE_QPNG };
+    return qpng__zcompress(&qpng, scratch, off, zbuf, zcap, nullptr, st);
 }
 
 int qpng__check_encode_opts(const qpng_encode_options o[static 1], uint32_t w, uint32_t h, qpng_color color, int depth) {
@@ -131,7 +137,7 @@ int qpng__check_encode_opts(const qpng_encode_options o[static 1], uint32_t w, u
                     (color == QPNG_COLOR_GRAY && o->trns_bytes != 2) || (color == QPNG_COLOR_RGB && o->trns_bytes != 6) ||
                     (color == QPNG_COLOR_PALETTE && o->trns_bytes > o->palette_entries)))
         return QPNG_ERR_ARGUMENT;
-    if (o->metadata) { qpng_status ms = qpng__meta_validate(o->metadata, color); if (ms != QPNG_OK) return ms; }
+    if (o->metadata) { qpng_status ms = qpng__meta_validate(o->metadata, (int)color); if (ms != QPNG_OK) return ms; }
     if (o->backend < QPNG_BACKEND_AUTO || o->backend > QPNG_BACKEND_ZLIBNG || (unsigned)o->preset > QPNG_PRESET_BEST ||
         o->filter < QPNG_FILTER_AUTO || o->filter > QPNG_FILTER_ADAPTIVE ||
         o->zlib_strategy < 0 || o->zlib_strategy > QPNG_ZSTRATEGY_RLE ||
@@ -145,22 +151,22 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
                     const qpng_encode_options *opts, uint8_t **outp, size_t *outn) {
     qpng_encode_options defo;
     if (!outp || !outn) return QPNG_ERR_ARGUMENT;
-    *outp = NULL; *outn = 0;
+    *outp = nullptr; *outn = 0;
     if (!opts) { qpng_encode_options_init(&defo); opts = &defo; }
     const qpng_allocator *A = opts->allocator;
     if (!pixels) return QPNG_ERR_ARGUMENT;
     const int ch = qpng__check_encode_opts(opts, w, h, color, depth);
     if (ch < 0) return ch;
     const int bits = ch * depth, bpp = bits >= 8 ? bits / 8 : 1;
-    const size_t rowbytes = ((size_t)w * bits + 7) / 8;
+    const size_t rowbytes = ((size_t)w * (size_t)bits + 7) / 8;
     if (!stride) stride = rowbytes;
     if (stride < rowbytes) return QPNG_ERR_ARGUMENT;
     if ((uint64_t)h * (rowbytes + 1) > ((uint64_t)1 << 40)) return QPNG_ERR_LIMITS;
     const size_t rawn = (size_t)h * (rowbytes + 1);
 
     const int backend = opts->backend;
-    const int zng = backend == QPNG_BACKEND_ZLIBNG;
-    const int probe = opts->filter < 0 && !opts->deflate_level &&
+    const bool zng = backend == QPNG_BACKEND_ZLIBNG;
+    const bool probe = opts->filter < 0 && !opts->deflate_level &&
                       (opts->preset == QPNG_PRESET_DEFAULT || opts->preset == QPNG_PRESET_BEST);
     int filter, level;
     switch (opts->preset) {   /* zlib-ng forced: FASTEST 1 (deflate_quick), FAST 2, DEFAULT 6, BEST 9 */
@@ -172,11 +178,13 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     }
     if (opts->filter >= 0) filter = opts->filter;
     if (opts->deflate_level) level = opts->deflate_level;
-    const qpng_zcfg explicit_cfg = qpng__zcfg(zng ? QPNG_BACKEND_ZLIBNG : QPNG_BACKEND_LIBDEFLATE, level, opts->search_depth,
-                                          opts->nice_length, 0, zng ? opts->zlib_strategy : 0);
+    const qpng_zcfg explicit_cfg = (qpng_zcfg){
+        .backend = zng ? QPNG_BACKEND_ZLIBNG : QPNG_BACKEND_LIBDEFLATE, .level = level,
+        .depth = opts->search_depth, .nice = opts->nice_length, .strategy = zng ? opts->zlib_strategy : 0,
+    };
     if (!qpng__zcfg_valid(&explicit_cfg)) return QPNG_ERR_ARGUMENT;
 
-    const int stream = !probe && !zng && level == QPNG_DEFLATE_PNGULTRA;
+    const bool stream = !probe && !zng && level == QPNG_DEFLATE_PNGULTRA;
     qpng_owned filt = { A, nullptr };
     if (!stream) {
         filt.p = qpng__alloc(A, rawn + 64);
@@ -221,14 +229,14 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
         zn = qpng__zcompress(&explicit_cfg, filt.p, rawn, z, zcap, A, &st);
     } else {
         /* 1. content probe on a row sample (Up-biased adaptive filter, png-fast): ratio >= GRAPHICS_RATIO = graphics */
-        const int best = opts->preset == QPNG_PRESET_BEST;
-        const int alpha = color == QPNG_COLOR_GRAY_ALPHA || color == QPNG_COLOR_RGBA;
+        const bool best = opts->preset == QPNG_PRESET_BEST;
+        const bool alpha = color == QPNG_COLOR_GRAY_ALPHA || color == QPNG_COLOR_RGBA;
         const int gfx_filter = alpha ? QPNG__FILTER_ADAPTIVE_GFX : QPNG__FILTER_ADAPTIVE_FLAT;   /* probe + trial filter */
         size_t sraw = 0, sz = sample_size(pixels, stride, h, rowbytes, bpp, gfx_filter, filt.p, z, zcap,
                                             &sraw, &st);
-        const int graphics = sz && (double)sraw >= (double)sz * GRAPHICS_RATIO;
+        const bool graphics = sz && (double)sraw >= (double)sz * GRAPHICS_RATIO;
         qpng_content cc = { best, alpha, depth, bpp, 0 };
-        const qpng_zcfg qpng = qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, QPNG_DEFLATE_QPNG, 0, 0, 0, 0);
+        const qpng_zcfg qpng = (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = QPNG_DEFLATE_QPNG };
         if (!sz) return st != QPNG_OK ? st : QPNG_ERR_ENCODE;
         qpng_owned tmp_ = { A, best || zng || !graphics ? qpng__alloc(A, zcap) : nullptr };
         uint8_t *const tmp = tmp_.p;
@@ -282,11 +290,11 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     for (size_t done = 0; done < zn;) {
         uint32_t len = (uint32_t)((zn - done) < 0x40000000u ? zn - done : 0x40000000u);
         if (p + 8 != z + done) memmove(p + 8, z + done, len);   /* p + 8 <= z + done always holds: chunks only add 12-byte overhead */
-        p = put_chunk(p, "IDAT", NULL, len);
+        p = put_chunk(p, "IDAT", nullptr, len);
         done += len;
     }
     if (mn[2]) { memcpy(p, m.b[2], mn[2]); p += mn[2]; }
-    p = put_chunk(p, "IEND", NULL, 0);
+    p = put_chunk(p, "IEND", nullptr, 0);
     *outn = (size_t)(p - out);
     *outp = qpng__realloc_shrink(A, qpng__take(&out_), cap, *outn);
     return QPNG_OK;
