@@ -72,13 +72,9 @@ static const uint8_t *find0(const uint8_t *p, const uint8_t *end) {
 typedef struct { const qpng_allocator *A; void *v; size_t n, cap, el; } qpng_vec;
 static void vec_release(qpng_vec *v) { qpng__free(v->A, v->v); }
 static void *vec_push(qpng_vec *v) {
-    if (v->n == v->cap) {
-        const size_t nc = v->cap ? v->cap * 2 : 16;
-        void *nv = qpng__alloc(v->A, nc * v->el);
-        if (!nv) return nullptr;
-        if (v->n) memcpy(nv, v->v, v->n * v->el);
-        qpng__free(v->A, v->v); v->v = nv; v->cap = nc;
-    }
+    void *nv = qpng__grow(v->A, v->v, v->n, &v->cap, v->n + 1, v->el, 16);
+    if (!nv) return nullptr;
+    v->v = nv;
     return (uint8_t *)v->v + v->el * v->n++;
 }
 

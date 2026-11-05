@@ -73,21 +73,11 @@ qpng_status qpng_decoder_info(const qpng_decoder *d, qpng_info *info) {
 [[nodiscard]] static qpng_status d_fail(qpng_decoder *d, qpng_status s) { d->state = D_ERR; d->err = s; return s; }
 
 static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
-    if (n > d->call - d->nall) {
-        const qpng_allocator *A = dA(d);
-        size_t nc = d->call ? d->call : 65536;
-        while (nc - d->nall < n) {
-            size_t next;
-            if (qpng__mul_size(&next, nc, 2)) return 0;
-            nc = next;
-        }
-        qpng_owned nb = { A, qpng__alloc(A, nc) };
-        if (!nb.p) return 0;
-        if (d->nall) memcpy(nb.p, d->all, d->nall);
-        qpng__free(A, d->all);
-        d->all = qpng__take(&nb);
-        d->call = nc;
-    }
+    if (!n) return 1;
+    size_t need;
+    uint8_t *nb = qpng__add_size(&need, d->nall, n) ? nullptr : qpng__grow(dA(d), d->all, d->nall, &d->call, need, 1, 65536);
+    if (!nb) return 0;
+    d->all = nb;
     memcpy(d->all + d->nall, p, n); d->nall += n;
     return 1;
 }

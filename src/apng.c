@@ -15,20 +15,16 @@ struct qpng_apng {
     qpng_apng_info info;
     const uint8_t *plte, *trns; uint32_t plen, tlen;          /* chunk payloads in the user buffer */
     uint8_t *head; size_t headn;                                /* frame PNG prefix: signature IHDR [PLTE] [tRNS] */
-    qpng_frame *fr; qpng_seg *seg; uint32_t nfr, nseg, capseg;
+    qpng_frame *fr; qpng_seg *seg; uint32_t nfr, nseg; size_t capfr, capseg;
     uint8_t *canvas, *saved; uint32_t next;                     /* iterator state */
     qpng_frame_info prev; int have_prev;
 };
 static const qpng_allocator *aA(const qpng_apng *a) { return a->has_a ? &a->a : nullptr; }
 
 static int add_seg(qpng_apng *a, const uint8_t *p, uint32_t n) {
-    if (a->nseg == a->capseg) {
-        uint32_t nc = a->capseg ? a->capseg * 2 : 64;
-        qpng_seg *ns = qpng__alloc(aA(a), nc * sizeof *ns);
-        if (!ns) return 0;
-        if (a->nseg) memcpy(ns, a->seg, a->nseg * sizeof *ns);
-        qpng__free(aA(a), a->seg); a->seg = ns; a->capseg = nc;
-    }
+    qpng_seg *ns = qpng__grow(aA(a), a->seg, a->nseg, &a->capseg, (size_t)a->nseg + 1, sizeof *ns, 64);
+    if (!ns) return 0;
+    a->seg = ns;
     a->seg[a->nseg++] = (qpng_seg){ .p = p, .n = n };
     a->fr[a->nfr - 1].nseg++; a->fr[a->nfr - 1].zsize += n;
     return 1;
@@ -80,11 +76,7 @@ static qpng_status parse(qpng_apng *a) {
     }
     a->info.animated = actl;
     a->info.num_plays = plays;
-    if (actl) {
-        a->fr = qpng__alloc(aA(a), (size_t)(nf < 4096 ? nf : 4096) * sizeof *a->fr);   /* grown below if needed */
-        if (!a->fr) return QPNG_ERR_NOMEM;
-    }
-    uint32_t capfr = nf < 4096 ? nf : 4096, seq = 0;
+    uint32_t seq = 0;
     int seen_idat = 0, idat_done = 0, cur_has_data = 1, cur_is_default = 0;
     for (; p + 12 <= end; ) {
         const uint32_t len = be32(p);
@@ -122,12 +114,10 @@ static qpng_status parse(qpng_apng *a) {
             if (!fi.width || !fi.height || fi.x_offset > in->width || fi.width > in->width - fi.x_offset ||
                 fi.y_offset > in->height || fi.height > in->height - fi.y_offset || fi.dispose_op > 2 || fi.blend_op > 1)
                 return QPNG_ERR_APNG;
-            if (a->nfr == capfr) {
-                uint32_t nc = capfr * 2;
-                qpng_frame *nfp = qpng__alloc(aA(a), (size_t)nc * sizeof *nfp);
-                if (!nfp) return QPNG_ERR_NOMEM;
-                memcpy(nfp, a->fr, (size_t)a->nfr * sizeof *nfp); qpng__free(aA(a), a->fr); a->fr = nfp; capfr = nc;
-            }
+            qpng_frame *nfp = qpng__grow(aA(a), a->fr, a->nfr, &a->capfr, (size_t)a->nfr + 1, sizeof *nfp,
+                                         nf < 4096 ? nf : 4096);   /* num_frames is untrusted */
+            if (!nfp) return QPNG_ERR_NOMEM;
+            a->fr = nfp;
             a->fr[a->nfr++] = (qpng_frame){ .fi = fi, .seg0 = a->nseg };
             cur_has_data = 0; cur_is_default = 0;
             continue;

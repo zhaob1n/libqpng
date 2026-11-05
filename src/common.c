@@ -50,16 +50,25 @@ const char *qpng_status_string(qpng_status s) {
     return "unknown status";
 }
 
+void *qpng__grow(const qpng_allocator *a, void *p, size_t n, size_t cap[static 1], size_t need, size_t el, size_t first) {
+    if (need <= *cap) return p;
+    size_t nc = *cap ? *cap : first, bytes;
+    while (nc < need) if (qpng__mul_size(&nc, nc, 2)) return nullptr;
+    if (qpng__mul_size(&bytes, nc, el)) return nullptr;
+    void *np = qpng__alloc(a, bytes);
+    if (!np) return nullptr;
+    if (n) memcpy(np, p, n * el);
+    qpng__free(a, p);
+    *cap = nc;
+    return np;
+}
+
 void qpng__wb_put(qpng__wbuf *w, const void *d, size_t n) {
     if (w->err || !n) return;
-    if (n > w->cap - w->n) {
-        size_t nc;
-        if (qpng__add_size(&nc, w->cap, w->n + n) || qpng__add_size(&nc, nc, 256)) { w->err = QPNG_ERR_NOMEM; return; }
-        uint8_t *np = qpng__alloc(w->A, nc);
-        if (!np) { w->err = QPNG_ERR_NOMEM; return; }
-        if (w->n) memcpy(np, w->p, w->n);
-        qpng__free(w->A, w->p); w->p = np; w->cap = nc;
-    }
+    size_t need;
+    uint8_t *np = qpng__add_size(&need, w->n, n) ? nullptr : qpng__grow(w->A, w->p, w->n, &w->cap, need, 1, 256);
+    if (!np) { w->err = QPNG_ERR_NOMEM; return; }
+    w->p = np;
     memcpy(w->p + w->n, d, n);
     w->n += n;
 }

@@ -83,6 +83,10 @@ int qpng__have_avx2(void);
 [[nodiscard]] void *qpng__alloc(const qpng_allocator *a, size_t n);
 void qpng__free(const qpng_allocator *a, void *p);
 [[nodiscard]] void *qpng__realloc_shrink(const qpng_allocator *a, void *p, size_t old_n, size_t new_n);
+/* Array p of n live elements of el bytes, capacity *cap: returns storage for >= need elements (p itself when it
+ * fits; else capacity doubles from `first`, the n elements move and p is freed), or nullptr with p untouched. */
+[[nodiscard]] void *qpng__grow(const qpng_allocator *a, void *p, size_t n, size_t cap[static 1], size_t need, size_t el,
+                               size_t first);
 
 /* ---- scope-bound release: [[gnu::cleanup]] instead of free()/goto-cleanup ----
  * Owning locals are declared with a cleanup attribute; error returns just return.
