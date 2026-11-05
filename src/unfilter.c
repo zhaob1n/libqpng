@@ -273,6 +273,8 @@ void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *
     /* Up is bytewise (bpp-agnostic); SIMD it for bpp 1/2 too (8-bit gray was scalar before).
      * unf_up's scalar tail covers n < 16. */
     if (f == 2) { unf_up(dst, src, prev, n); return; }
+    /* bpp 1 (8-bit gray / palette): register-carried scalar; skip the 3/4/6/8 dispatch. */
+    if (bpp == 1) { unf_bpp1(f, dst, src, prev, n); return; }
     if ((bpp == 6 || bpp == 8) && n >= 16) {
         switch (f) {
         case 1: roww_1(dst, src, nullptr, n, bpp); return;
