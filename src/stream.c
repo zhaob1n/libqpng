@@ -75,12 +75,19 @@ static qpng_status d_fail(qpng_decoder *d, qpng_status s) { d->state = D_ERR; d-
 
 static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
     if (n > d->call - d->nall) {
+        const qpng_allocator *A = dA(d);
         size_t nc = d->call ? d->call : 65536;
-        while (nc - d->nall < n) nc *= 2;
-        uint8_t *nb = qpng__alloc(dA(d), nc);
-        if (!nb) return 0;
-        if (d->nall) memcpy(nb, d->all, d->nall);
-        qpng__free(dA(d), d->all); d->all = nb; d->call = nc;
+        while (nc - d->nall < n) {
+            size_t next;
+            if (qpng__mul_size(&next, nc, 2)) return 0;
+            nc = next;
+        }
+        qpng_owned nb = { A, qpng__alloc(A, nc) };
+        if (!nb.p) return 0;
+        if (d->nall) memcpy(nb.p, d->all, d->nall);
+        qpng__free(A, d->all);
+        d->all = qpng__take(&nb);
+        d->call = nc;
     }
     memcpy(d->all + d->nall, p, n); d->nall += n;
     return 1;
@@ -97,11 +104,17 @@ static qpng_status d_begin_image(qpng_decoder *d) {
     }
     const int bits = d->ich * in->bit_depth;
     d->bpp = bits >= 8 ? bits / 8 : 1;
-    d->stride = ((size_t)in->width * bits + 7) / 8; d->rs = d->stride + 1;
+    size_t stride;
+    if (qpng__mul_size(&stride, in->width, (size_t)bits) || qpng__add_size(&stride, stride, 7)) return QPNG_ERR_LIMITS;
+    d->stride = stride / 8;
+    d->rs = d->stride + 1;
     int och, odepth, ocolor;
     qpng__xform_setup(&d->x, in->color_type, in->bit_depth, d->ich, in->width, d->o.output, d->has_plte ? d->plte : nullptr,
                     d->plen, d->has_trns ? d->trns : nullptr, d->tlen, &och, &odepth, &ocolor);
-    d->ostride = ((size_t)in->width * och * odepth + 7) / 8;
+    size_t ostride;
+    if (qpng__mul_size(&ostride, in->width, (size_t)och * (size_t)odepth) || qpng__add_size(&ostride, ostride, 7))
+        return QPNG_ERR_LIMITS;
+    d->ostride = ostride / 8;
     const uint64_t maxout = d->o.max_output_bytes ? d->o.max_output_bytes : (1ull << 30);
     if (!d->row_cb && (uint64_t)d->ostride * in->height > maxout) return QPNG_ERR_LIMITS;
     if (d->buffered) return QPNG_OK;
@@ -372,7 +385,9 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
         return QPNG_ERR_ARGUMENT;
     if (!qpng_backend_available((qpng_backend)opts->backend)) return QPNG_ERR_UNSUPPORTED;
     const int bits = ch * depth;
-    const size_t n = ((size_t)w * bits + 7) / 8;
+    size_t n;
+    if (qpng__mul_size(&n, w, (size_t)bits) || qpng__add_size(&n, n, 7)) return QPNG_ERR_LIMITS;
+    n /= 8;
     if (n > (64u << 20)) return QPNG_ERR_LIMITS;
 
     /* stream configuration */
@@ -401,10 +416,16 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
     qpng_status s = QPNG_OK;
     if (e->ultra && (n + 1) > QPNG_ZSTREAM_MAX_CHUNK) s = QPNG_ERR_UNSUPPORTED;   /* > 256 KiB rows: use qpng_encode */
     if (!s) {
-        e->rows = qpng__alloc(e->A, (size_t)(e->max_rows + 1) * n + 64);
-        e->filt = qpng__alloc(e->A, (size_t)e->max_rows * (n + 1) + 64);
-        e->idat = qpng__alloc(e->A, E_IDAT_MAX);
-        if (!e->rows || !e->filt || !e->idat) s = QPNG_ERR_NOMEM;
+        size_t rows_n, filt_n;
+        if (qpng__mul_size(&rows_n, (size_t)e->max_rows + 1, n) || qpng__add_size(&rows_n, rows_n, 64) ||
+            qpng__mul_size(&filt_n, e->max_rows, n + 1) || qpng__add_size(&filt_n, filt_n, 64))
+            s = QPNG_ERR_LIMITS;
+        else {
+            e->rows = qpng__alloc(e->A, rows_n);
+            e->filt = qpng__alloc(e->A, filt_n);
+            e->idat = qpng__alloc(e->A, E_IDAT_MAX);
+            if (!e->rows || !e->filt || !e->idat) s = QPNG_ERR_NOMEM;
+        }
     }
     if (!s) { memset(e->rows, 0, n); memset(e->filt, 0, 1); e->z = qpng__zstream_new(&zc, e->A, e_sink, e, &s); }
     /* signature, IHDR, metadata (before PLTE), PLTE, tRNS, metadata (before IDAT) */
