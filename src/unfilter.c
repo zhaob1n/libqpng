@@ -265,24 +265,24 @@ DEF_ROWW(1) DEF_ROWW(3) DEF_ROWW(4)
 #endif /* QPNG_X86 */
 
 void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, int bpp) {
+    /* None, and Up on the first row, are pure copies at every bpp. */
+    if (f == 0 || (f == 2 && !prev)) { memmove(dst, src, n); return; }
 #if !QPNG_X86
-    if (f == 0 || (f == 2 && !prev)) memmove(dst, src, n);
-    else unf_scalar(f, dst, src, prev, n, bpp);
+    unf_scalar(f, dst, src, prev, n, bpp);
 #else
+    /* Up is bytewise (bpp-agnostic); SIMD it for bpp 1/2 too (8-bit gray was scalar before).
+     * unf_up's scalar tail covers n < 16. */
+    if (f == 2) { unf_up(dst, src, prev, n); return; }
     if ((bpp == 6 || bpp == 8) && n >= 16) {
         switch (f) {
-        case 0: memmove(dst, src, n); return;
         case 1: roww_1(dst, src, nullptr, n, bpp); return;
-        case 2: if (prev) unf_up(dst, src, prev, n); else memmove(dst, src, n); return;
         case 3: if (prev) roww_3(dst, src, prev, n, bpp); else unf_scalar(3, dst, src, prev, n, bpp); return;
         case 4: if (prev) roww_4(dst, src, prev, n, bpp); else roww_1(dst, src, nullptr, n, bpp); return;
         }
     }
     if ((bpp != 3 && bpp != 4) || n < 8) { unf_scalar(f, dst, src, prev, n, bpp); return; }
     switch (f) {
-    case 0: memmove(dst, src, n); break;
     case 1: unf_sub_px(dst, src, n, bpp); break;
-    case 2: if (prev) unf_up(dst, src, prev, n); else memmove(dst, src, n); break;
     case 3: if (prev) unf_avg_px(dst, src, prev, n, bpp); else unf_scalar(3, dst, src, prev, n, bpp); break;
     case 4: if (prev) unf_paeth_px(dst, src, prev, n, bpp); else unf_sub_px(dst, src, n, bpp); break;
     }
