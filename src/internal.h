@@ -53,9 +53,10 @@ QPNG_INLINE int qpng__pred(int f, int a, int b, int c) {
     return f == 0 ? 0 : f == 1 ? a : f == 2 ? b : f == 3 ? (a + b) >> 1 : paeth_s(a, b, c);
 }
 #if QPNG_X86
-/* Paeth predictor on 8 16-bit lanes holding bytes (same formulation as paeth_s) */
+/* Paeth predictor on 8 16-bit lanes holding bytes (same formulation as paeth_s). a comes last in th: in the
+ * unfilter wavefronts it is the loop-carried value, so 3c - b runs off its dependency chain. */
 static inline __m128i qpng__paeth_epi16(__m128i a, __m128i b, __m128i c) {
-    const __m128i th = _mm_sub_epi16(_mm_add_epi16(c, _mm_add_epi16(c, c)), _mm_add_epi16(a, b));
+    const __m128i th = _mm_sub_epi16(_mm_sub_epi16(_mm_add_epi16(c, _mm_add_epi16(c, c)), b), a);
     const __m128i lo = _mm_min_epi16(a, b), hi = _mm_max_epi16(a, b);
     const __m128i m1 = _mm_cmpgt_epi16(hi, th), m2 = _mm_cmpgt_epi16(th, lo);
     const __m128i t0 = _mm_or_si128(_mm_and_si128(m1, c), _mm_andnot_si128(m1, lo));
