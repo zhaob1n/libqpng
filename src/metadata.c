@@ -226,62 +226,79 @@ static int chunk_type_ok(const char *t) {
     return !skip_type((const uint8_t *)t);
 }
 
-typedef struct { uint8_t *p; size_t n, cap; int err; const qpng_allocator *A; } qpng_wbuf;
-static uint8_t *wb_reserve(qpng_wbuf *w, size_t k) {
-    if (w->err) return NULL;
-    if (k > w->cap - w->n) {
-        size_t nc = w->cap * 2 + k + 256;
+void qpng__wb_put(qpng__wbuf *w, const void *d, size_t n) {
+    if (w->err || !n) return;
+    if (n > w->cap - w->n) {
+        size_t nc;
+        if (qpng__add_size(&nc, w->cap, w->n + n) || qpng__add_size(&nc, nc, 256)) { w->err = QPNG_ERR_NOMEM; return; }
         uint8_t *np = qpng__alloc(w->A, nc);
-        if (!np) { w->err = QPNG_ERR_NOMEM; return NULL; }
+        if (!np) { w->err = QPNG_ERR_NOMEM; return; }
         if (w->n) memcpy(np, w->p, w->n);
         qpng__free(w->A, w->p); w->p = np; w->cap = nc;
     }
-    return w->p + w->n;
+    memcpy(w->p + w->n, d, n);
+    w->n += n;
 }
-/* chunk with payload parts a (+ b) */
-static void wb_chunk(qpng_wbuf *w, const char *type, const void *a, size_t an, const void *b, size_t bn) {
-    if (an + bn > 0x7FFFFFFFu) { w->err = QPNG_ERR_ARGUMENT; return; }
-    uint8_t *q = wb_reserve(w, 12 + an + bn);
-    if (!q) return;
-    wbe32(q, (uint32_t)(an + bn)); memcpy(q + 4, type, 4);
-    if (an) memcpy(q + 8, a, an);
-    if (bn) memcpy(q + 8 + an, b, bn);
-    wbe32(q + 8 + an + bn, libdeflate_crc32(0, q + 4, 4 + an + bn));
-    w->n += 12 + an + bn;
+size_t qpng__wb_begin(qpng__wbuf *w, const char type[static 4]) {
+    const size_t start = w->n;
+    uint8_t h[8] = {};
+    memcpy(h + 4, type, 4);
+    qpng__wb_put(w, h, sizeof h);
+    return start;
 }
+void qpng__wb_end(qpng__wbuf *w, size_t start) {
+    if (w->err) return;
+    const size_t len = w->n - start - 8;
+    if (len > 0x7FFFFFFFu) { w->err = QPNG_ERR_ARGUMENT; return; }
+    wbe32(w->p + start, (uint32_t)len);
+    uint8_t c[4];
+    wbe32(c, libdeflate_crc32(0, w->p + start + 4, len + 4));
+    qpng__wb_put(w, c, sizeof c);
+}
+void qpng__wb_chunk(qpng__wbuf *w, const char type[static 4], const void *d, size_t n) {
+    if (n > 0x7FFFFFFFu) { if (!w->err) w->err = QPNG_ERR_ARGUMENT; return; }
+    const size_t c = qpng__wb_begin(w, type);
+    qpng__wb_put(w, d, n);
+    qpng__wb_end(w, c);
+}
+static void wb_str(qpng__wbuf *w, const char *s) { qpng__wb_put(w, s, strlen(s) + 1); }
+
 static uint8_t *zlib9(const void *src, size_t n, size_t *zn, const qpng_allocator *A) {
     struct libdeflate_compressor *c = libdeflate_alloc_compressor(9);
-    if (!c) return NULL;
+    if (!c) return nullptr;
     size_t cap = libdeflate_zlib_compress_bound(c, n);
-    uint8_t *z = qpng__alloc(A, cap);
-    if (z) *zn = libdeflate_zlib_compress(c, src, n, z, cap);
+    qpng_owned z = { A, qpng__alloc(A, cap) };
+    *zn = z.p ? libdeflate_zlib_compress(c, src, n, z.p, cap) : 0;
     libdeflate_free_compressor(c);
-    if (z && !*zn) { qpng__free(A, z); z = NULL; }
-    return z;
+    return *zn ? qpng__take(&z) : nullptr;
 }
-static void wb_text(qpng_wbuf *w, const qpng_text *t) {
-    const size_t kn = strlen(t->keyword);
-    const size_t tn = t->text_size ? t->text_size : (t->text ? strlen(t->text) : 0);
-    const int comp = t->kind == QPNG_TEXT_ZTXT || (t->kind == QPNG_TEXT_ITXT && t->compressed);
-    const char *lg = t->language ? t->language : "", *tk = t->translated_keyword ? t->translated_keyword : "";
-    const size_t ln = strlen(lg), tkn = strlen(tk);
-    /* header: keyword NUL [zTXt: method] [iTXt: flag method lang NUL tkey NUL] */
-    const size_t hn = kn + 1 + (t->kind == QPNG_TEXT_ZTXT ? 1 : 0) + (t->kind == QPNG_TEXT_ITXT ? 2 + ln + 1 + tkn + 1 : 0);
-    uint8_t *h = qpng__alloc(w->A, hn);
-    if (!h) { w->err = QPNG_ERR_NOMEM; return; }
-    memcpy(h, t->keyword, kn); h[kn] = 0;
-    size_t o = kn + 1;
-    if (t->kind == QPNG_TEXT_ZTXT) h[o++] = 0;
-    if (t->kind == QPNG_TEXT_ITXT) {
-        h[o++] = (uint8_t)comp; h[o++] = 0;
-        memcpy(h + o, lg, ln); o += ln; h[o++] = 0;
-        memcpy(h + o, tk, tkn); o += tkn; h[o++] = 0;
-    }
-    const void *body = t->text; size_t bn = tn; uint8_t *z = NULL;
-    if (comp) { z = zlib9(t->text ? t->text : "", tn, &bn, w->A); if (!z) w->err = QPNG_ERR_NOMEM; body = z; }
+/* append zlib(src) at level 9 and close the chunk opened at start */
+static void wb_deflated(qpng__wbuf *w, size_t start, const void *src, size_t n) {
+    size_t zn = 0;
+    qpng_owned z = { w->A, zlib9(src, n, &zn, w->A) };
+    if (!z.p) { if (!w->err) w->err = QPNG_ERR_NOMEM; return; }
+    qpng__wb_put(w, z.p, zn);
+    qpng__wb_end(w, start);
+}
+static void wb_text(qpng__wbuf *w, const qpng_text *t) {
     static const char *const ty[3] = { "tEXt", "zTXt", "iTXt" };
-    if (!w->err) wb_chunk(w, ty[t->kind], h, hn, body, bn);
-    qpng__free(w->A, z); qpng__free(w->A, h);
+    const size_t tn = t->text_size ? t->text_size : t->text ? strlen(t->text) : 0;
+    const bool comp = t->kind == QPNG_TEXT_ZTXT || (t->kind == QPNG_TEXT_ITXT && t->compressed);
+    const size_t c = qpng__wb_begin(w, ty[t->kind]);
+    /* keyword NUL [zTXt: method] [iTXt: flag method lang NUL tkey NUL] */
+    wb_str(w, t->keyword);
+    if (t->kind == QPNG_TEXT_ZTXT) qpng__wb_put(w, (uint8_t[]){ 0 }, 1);
+    if (t->kind == QPNG_TEXT_ITXT) {
+        qpng__wb_put(w, (uint8_t[]){ comp, 0 }, 2);
+        wb_str(w, t->language ? t->language : "");
+        wb_str(w, t->translated_keyword ? t->translated_keyword : "");
+    }
+    if (comp) {
+        wb_deflated(w, c, t->text ? t->text : "", tn);
+    } else {
+        qpng__wb_put(w, t->text, tn);
+        qpng__wb_end(w, c);
+    }
 }
 
 qpng_status qpng__meta_validate(const qpng_metadata *m, int color) {
@@ -313,45 +330,50 @@ qpng_status qpng__meta_validate(const qpng_metadata *m, int color) {
     return QPNG_OK;
 }
 
-qpng_status qpng__meta_serialize(const qpng_metadata *m, int loc, const qpng_allocator *A, uint8_t **out, size_t *outn) {
-    qpng_wbuf w = { NULL, 0, 0, 0, A };
+static void wb_be16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
+
+void qpng__meta_write(qpng__wbuf *w, const qpng_metadata *m, int loc) {
     uint8_t b[32];
     if (loc == 0) {   /* color information must precede PLTE and IDAT */
-        if (m->has_cicp) wb_chunk(&w, "cICP", m->cicp, 4, NULL, 0);
+        if (m->has_cicp) qpng__wb_chunk(w, "cICP", m->cicp, 4);
         if (m->has_mdcv) {
-            for (int i = 0; i < 6; i++) { b[2 * i] = (uint8_t)(m->mdcv_primaries[i] >> 8); b[2 * i + 1] = (uint8_t)m->mdcv_primaries[i]; }
-            b[12] = (uint8_t)(m->mdcv_white[0] >> 8); b[13] = (uint8_t)m->mdcv_white[0];
-            b[14] = (uint8_t)(m->mdcv_white[1] >> 8); b[15] = (uint8_t)m->mdcv_white[1];
+            for (int i = 0; i < 6; i++) wb_be16(b + 2 * i, m->mdcv_primaries[i]);
+            wb_be16(b + 12, m->mdcv_white[0]); wb_be16(b + 14, m->mdcv_white[1]);
             wbe32(b + 16, m->mdcv_max_lum); wbe32(b + 20, m->mdcv_min_lum);
-            wb_chunk(&w, "mDCV", b, 24, NULL, 0);
+            qpng__wb_chunk(w, "mDCV", b, 24);
         }
-        if (m->has_clli) { wbe32(b, m->clli_max_cll); wbe32(b + 4, m->clli_max_fall); wb_chunk(&w, "cLLI", b, 8, NULL, 0); }
-        if (m->iccp) {
-            size_t zn = 0; uint8_t *z = zlib9(m->iccp, m->iccp_size, &zn, A);
-            const size_t nn = strlen(m->iccp_name);
-            uint8_t hdr[81];
-            memcpy(hdr, m->iccp_name, nn); hdr[nn] = 0; hdr[nn + 1] = 0;   /* name NUL method */
-            if (!z) w.err = QPNG_ERR_NOMEM; else wb_chunk(&w, "iCCP", hdr, nn + 2, z, zn);
-            qpng__free(A, z);
+        if (m->has_clli) { wbe32(b, m->clli_max_cll); wbe32(b + 4, m->clli_max_fall); qpng__wb_chunk(w, "cLLI", b, 8); }
+        if (m->iccp) {   /* name NUL method */
+            const size_t c = qpng__wb_begin(w, "iCCP");
+            wb_str(w, m->iccp_name);
+            qpng__wb_put(w, (uint8_t[]){ 0 }, 1);
+            wb_deflated(w, c, m->iccp, m->iccp_size);
         }
-        if (m->has_srgb) wb_chunk(&w, "sRGB", &m->srgb_intent, 1, NULL, 0);
-        if (m->has_gama) { wbe32(b, m->gamma); wb_chunk(&w, "gAMA", b, 4, NULL, 0); }
-        if (m->has_chrm) { for (int i = 0; i < 8; i++) wbe32(b + 4 * i, m->chrm[i]); wb_chunk(&w, "cHRM", b, 32, NULL, 0); }
-        if (m->has_sbit) wb_chunk(&w, "sBIT", m->sbit, m->sbit_size, NULL, 0);
+        if (m->has_srgb) qpng__wb_chunk(w, "sRGB", &m->srgb_intent, 1);
+        if (m->has_gama) { wbe32(b, m->gamma); qpng__wb_chunk(w, "gAMA", b, 4); }
+        if (m->has_chrm) { for (int i = 0; i < 8; i++) wbe32(b + 4 * i, m->chrm[i]); qpng__wb_chunk(w, "cHRM", b, 32); }
+        if (m->has_sbit) qpng__wb_chunk(w, "sBIT", m->sbit, m->sbit_size);
     } else if (loc == 1) {   /* after PLTE / tRNS (bKGD must follow PLTE) */
-        if (m->has_bkgd) wb_chunk(&w, "bKGD", m->bkgd, m->bkgd_size, NULL, 0);
-        if (m->has_phys) { wbe32(b, m->phys_x); wbe32(b + 4, m->phys_y); b[8] = m->phys_unit; wb_chunk(&w, "pHYs", b, 9, NULL, 0); }
-        if (m->exif) wb_chunk(&w, "eXIf", m->exif, m->exif_size, NULL, 0);
+        if (m->has_bkgd) qpng__wb_chunk(w, "bKGD", m->bkgd, m->bkgd_size);
+        if (m->has_phys) { wbe32(b, m->phys_x); wbe32(b + 4, m->phys_y); b[8] = m->phys_unit; qpng__wb_chunk(w, "pHYs", b, 9); }
+        if (m->exif) qpng__wb_chunk(w, "eXIf", m->exif, m->exif_size);
         if (m->has_time) {
-            b[0] = (uint8_t)(m->time_year >> 8); b[1] = (uint8_t)m->time_year; b[2] = m->time_month; b[3] = m->time_day;
-            b[4] = m->time_hour; b[5] = m->time_minute; b[6] = m->time_second;
-            wb_chunk(&w, "tIME", b, 7, NULL, 0);
+            wb_be16(b, m->time_year);
+            b[2] = m->time_month; b[3] = m->time_day; b[4] = m->time_hour; b[5] = m->time_minute; b[6] = m->time_second;
+            qpng__wb_chunk(w, "tIME", b, 7);
         }
-        for (size_t i = 0; i < m->text_count; i++) wb_text(&w, &m->texts[i]);
+        for (size_t i = 0; i < m->text_count; i++) wb_text(w, &m->texts[i]);
     }
     for (size_t i = 0; i < m->chunk_count; i++)
-        if ((int)m->chunks[i].location == loc) wb_chunk(&w, m->chunks[i].type, m->chunks[i].data, m->chunks[i].size, NULL, 0);
-    if (w.err) { qpng__free(A, w.p); *out = NULL; *outn = 0; return (qpng_status)w.err; }
-    *out = w.p; *outn = w.n;
+        if ((int)m->chunks[i].location == loc) qpng__wb_chunk(w, m->chunks[i].type, m->chunks[i].data, m->chunks[i].size);
+}
+
+qpng_status qpng__meta_serialize(const qpng_metadata *m, int loc, const qpng_allocator *A, uint8_t **out, size_t *outn) {
+    QPNG_CLEANUP(qpng__wb_release) qpng__wbuf w = { .A = A };
+    *out = nullptr; *outn = 0;
+    qpng__meta_write(&w, m, loc);
+    if (w.err) return w.err;
+    *outn = w.n;
+    *out = QPNG_TAKE(w.p);
     return QPNG_OK;
 }

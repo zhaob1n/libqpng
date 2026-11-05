@@ -253,55 +253,47 @@ qpng_status qpng_apng_next_frame(qpng_apng *a, const uint8_t **canvas, qpng_fram
 }
 
 /* ---- encode ---- */
-typedef struct { uint8_t *p; size_t n, cap; const qpng_allocator *A; int err; } obuf;
-static void ob_put(obuf *o, const void *d, size_t n) {
-    if (o->err) return;
-    if (n > o->cap - o->n) {
-        size_t nc = (o->cap + n) * 2;
-        uint8_t *np = qpng__alloc(o->A, nc);
-        if (!np) { o->err = QPNG_ERR_NOMEM; return; }
-        if (o->n) memcpy(np, o->p, o->n);
-        qpng__free(o->A, o->p); o->p = np; o->cap = nc;
+/* IDAT or (with a sequence number) fdAT chunk */
+static void put_data(qpng__wbuf *o, uint32_t *seq, const uint8_t *d, size_t n) {
+    if (!seq) {
+        qpng__wb_chunk(o, "IDAT", d, n);
+        return;
     }
-    if (n) memcpy(o->p + o->n, d, n);
-    o->n += n;
-}
-/* chunk with optional 4-byte sequence-number prefix */
-static void ob_chunk(obuf *o, const char *type, const int64_t seq, const uint8_t *d, size_t n) {
-    uint8_t h[12]; const size_t extra = seq >= 0 ? 4 : 0;
-    wbe32(h, (uint32_t)(n + extra)); memcpy(h + 4, type, 4); if (extra) wbe32(h + 8, (uint32_t)seq);
-    uint32_t crc = libdeflate_crc32(0, h + 4, 4 + extra);
-    if (n) crc = libdeflate_crc32(crc, d, n);
-    ob_put(o, h, 8 + extra); ob_put(o, d, n);
-    uint8_t c[4]; wbe32(c, crc); ob_put(o, c, 4);
+    const size_t c = qpng__wb_begin(o, "fdAT");
+    uint8_t sb[4];
+    wbe32(sb, (*seq)++);
+    qpng__wb_put(o, sb, 4);
+    qpng__wb_put(o, d, n);
+    qpng__wb_end(o, c);
 }
 
-/* encode one image with qpng_encode and append its IDAT payload as IDAT / fdAT chunks */
-static qpng_status put_frame(obuf *o, const void *px, size_t stride, uint32_t w, uint32_t h, qpng_color color, int depth,
-                           const qpng_encode_options *eo, int as_fdat, uint32_t *seq) {
+/* encode one image with qpng_encode and append its IDAT payload as IDAT (seq == nullptr) or fdAT chunks */
+static qpng_status put_frame(qpng__wbuf *o, const void *px, size_t stride, uint32_t w, uint32_t h, qpng_color color,
+                             int depth, const qpng_encode_options *eo, uint32_t *seq) {
     uint8_t *png; size_t pn;
     qpng_status s = qpng_encode(px, w, h, stride, color, depth, eo, &png, &pn);
     if (s) return s;
-    for (size_t q = 8; q + 12 <= pn; ) {
-        const uint32_t len = be32(png + q);
-        if (!memcmp(png + q + 4, "IDAT", 4)) {
-            for (size_t k = 0; k < len || (!len && !k); ) {   /* <= 1 MiB per chunk */
-                size_t c = len - k < (1u << 20) ? len - k : (1u << 20);
-                ob_chunk(o, as_fdat ? "fdAT" : "IDAT", as_fdat ? (int64_t)(*seq)++ : -1, png + q + 8 + k, c);
-                k += c; if (!len) break;
-            }
-        }
-        q += 12 + len;
+    qpng_owned own = { eo->allocator, png };
+    constexpr size_t max_chunk = 1u << 20;
+    for (size_t q = 8; q + 12 <= pn; q += 12 + be32(png + q)) {
+        if (memcmp(png + q + 4, "IDAT", 4)) continue;
+        const uint8_t *d = png + q + 8;
+        const size_t len = be32(png + q);
+        size_t k = 0;
+        do {
+            const size_t c = len - k < max_chunk ? len - k : max_chunk;
+            put_data(o, seq, d + k, c);
+            k += c;
+        } while (k < len);
     }
-    qpng_buffer_free(png, eo->allocator);
-    return (qpng_status)o->err;
+    return o->err;
 }
 
 qpng_status qpng_encode_apng(uint32_t W, uint32_t H, qpng_color color, int depth, const qpng_apng_frame *fr, uint32_t nf,
-                         uint32_t plays, const void *defimg, size_t defstride, const qpng_encode_options *opts,
-                         uint8_t **out, size_t *outn) {
+                             uint32_t plays, const void *defimg, size_t defstride, const qpng_encode_options *opts,
+                             uint8_t **out, size_t *outn) {
     if (!out || !outn) return QPNG_ERR_ARGUMENT;
-    *out = NULL; *outn = 0;
+    *out = nullptr; *outn = 0;
     qpng_encode_options defo;
     if (!opts) { qpng_encode_options_init(&defo); opts = &defo; }
     if (!fr || !nf || nf > 0x7FFFFFFFu || plays > 0x7FFFFFFFu || !W || !H) return QPNG_ERR_ARGUMENT;
@@ -313,44 +305,50 @@ qpng_status qpng_encode_apng(uint32_t W, uint32_t H, qpng_color color, int depth
     }
     if (!defimg && (fr[0].info.width != W || fr[0].info.height != H || fr[0].info.x_offset || fr[0].info.y_offset))
         return QPNG_ERR_ARGUMENT;
-    /* header + metadata + PLTE/tRNS: from a 1-pixel-high qpng_encode of the default image / frame 0 (validates opts) */
-    qpng_encode_options eo = *opts; eo.metadata = NULL;
-    obuf o = { NULL, 0, 0, opts->allocator, 0 };
-    uint8_t *m[3] = { NULL, NULL, NULL }; size_t mn[3] = { 0, 0, 0 };
-    qpng_status s = QPNG_OK;
-    if (opts->metadata) {
-        s = qpng__meta_validate(opts->metadata, color);
-        for (int l = 0; l < 3 && !s; l++) s = qpng__meta_serialize(opts->metadata, l, opts->allocator, &m[l], &mn[l]);
+    const qpng_metadata *meta = opts->metadata;
+    if (meta) {
+        qpng_status s = qpng__meta_validate(meta, color);
+        if (s) return s;
     }
+    qpng_encode_options eo = *opts;   /* per-frame qpng_encode: payload only, metadata is written here */
+    eo.metadata = nullptr;
+    QPNG_CLEANUP(qpng__wb_release) qpng__wbuf o = { .A = opts->allocator };
+    static constexpr uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+    uint8_t ih[13] = { [8] = (uint8_t)depth, [9] = (uint8_t)color }, ac[8];
+    wbe32(ih, W); wbe32(ih + 4, H);
+    wbe32(ac, nf); wbe32(ac + 4, plays);
+    qpng__wb_put(&o, sig, sizeof sig);
+    qpng__wb_chunk(&o, "IHDR", ih, sizeof ih);
+    qpng__wb_chunk(&o, "acTL", ac, sizeof ac);
+    if (meta) qpng__meta_write(&o, meta, 0);
+    if (opts->palette && opts->palette_entries > 0 && opts->palette_entries <= 256)
+        qpng__wb_chunk(&o, "PLTE", opts->palette, 3u * (size_t)opts->palette_entries);
+    if (opts->trns && opts->trns_bytes > 0 && opts->trns_bytes <= 256)
+        qpng__wb_chunk(&o, "tRNS", opts->trns, (size_t)opts->trns_bytes);
+    if (meta) qpng__meta_write(&o, meta, 1);
+    if (o.err) return o.err;
     uint32_t seq = 0;
-    if (!s) {
-        static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
-        uint8_t ih[13], ac[8];
-        wbe32(ih, W); wbe32(ih + 4, H); ih[8] = (uint8_t)depth; ih[9] = (uint8_t)color; ih[10] = ih[11] = ih[12] = 0;
-        wbe32(ac, nf); wbe32(ac + 4, plays);
-        ob_put(&o, sig, 8);
-        ob_chunk(&o, "IHDR", -1, ih, 13);
-        ob_chunk(&o, "acTL", -1, ac, 8);
-        ob_put(&o, m[0], mn[0]);
-        if (opts->palette && opts->palette_entries > 0 && opts->palette_entries <= 256)
-            ob_chunk(&o, "PLTE", -1, opts->palette, 3u * (size_t)opts->palette_entries);
-        if (opts->trns && opts->trns_bytes > 0 && opts->trns_bytes <= 256) ob_chunk(&o, "tRNS", -1, opts->trns, (size_t)opts->trns_bytes);
-        ob_put(&o, m[1], mn[1]);
-        s = (qpng_status)o.err;
+    if (defimg) {
+        qpng_status s = put_frame(&o, defimg, defstride, W, H, color, depth, &eo, nullptr);
+        if (s) return s;
     }
-    if (!s && defimg) s = put_frame(&o, defimg, defstride, W, H, color, depth, &eo, 0, &seq);
-    for (uint32_t i = 0; i < nf && !s; i++) {
+    for (uint32_t i = 0; i < nf; i++) {
         const qpng_frame_info *f = &fr[i].info;
         uint8_t fc[26];
-        wbe32(fc, f->width); wbe32(fc + 4, f->height); wbe32(fc + 8, f->x_offset); wbe32(fc + 12, f->y_offset);
-        fc[16] = (uint8_t)(f->delay_num >> 8); fc[17] = (uint8_t)f->delay_num; fc[18] = (uint8_t)(f->delay_den >> 8); fc[19] = (uint8_t)f->delay_den;
-        fc[20] = f->dispose_op; fc[21] = f->blend_op;
-        ob_chunk(&o, "fcTL", seq++, fc, 22);
-        s = put_frame(&o, fr[i].pixels, fr[i].stride, f->width, f->height, color, depth, &eo, defimg || i > 0, &seq);
+        wbe32(fc, seq++);
+        wbe32(fc + 4, f->width); wbe32(fc + 8, f->height); wbe32(fc + 12, f->x_offset); wbe32(fc + 16, f->y_offset);
+        fc[20] = (uint8_t)(f->delay_num >> 8); fc[21] = (uint8_t)f->delay_num;
+        fc[22] = (uint8_t)(f->delay_den >> 8); fc[23] = (uint8_t)f->delay_den;
+        fc[24] = f->dispose_op; fc[25] = f->blend_op;
+        qpng__wb_chunk(&o, "fcTL", fc, sizeof fc);
+        qpng_status s = put_frame(&o, fr[i].pixels, fr[i].stride, f->width, f->height, color, depth, &eo,
+                                  defimg || i > 0 ? &seq : nullptr);
+        if (s) return s;
     }
-    if (!s) { ob_put(&o, m[2], mn[2]); ob_chunk(&o, "IEND", -1, NULL, 0); s = (qpng_status)o.err; }
-    for (int l = 0; l < 3; l++) qpng__free(opts->allocator, m[l]);
-    if (s) { qpng__free(opts->allocator, o.p); return s; }
-    *out = o.p; *outn = o.n;
+    if (meta) qpng__meta_write(&o, meta, 2);
+    qpng__wb_chunk(&o, "IEND", nullptr, 0);
+    if (o.err) return o.err;
+    *outn = o.n;
+    *out = QPNG_TAKE(o.p);
     return QPNG_OK;
 }
