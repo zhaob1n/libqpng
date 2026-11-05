@@ -1,10 +1,12 @@
 foreach(t api conformance roundtrip metadata stream apng)
   add_executable(test_${t} test_${t}.c)
   target_link_libraries(test_${t} PRIVATE qpng)
+  qpng_modern_c(test_${t})
 endforeach()
 # test_deflate uses the vendored libdeflate directly (renamed symbols inside the qpng library)
 add_executable(test_deflate test_deflate.c)
 target_link_libraries(test_deflate PRIVATE qpng_internal)
+qpng_modern_c(test_deflate)
 target_include_directories(test_deflate PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/third_party/libdeflate)
 find_package(ZLIB)
 if(ZLIB_FOUND)   # streams must also inflate with stock zlib
