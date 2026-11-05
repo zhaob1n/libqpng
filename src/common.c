@@ -1,14 +1,20 @@
 /* common.c - allocator plumbing, CPU feature detection, status strings. */
 #include "internal.h"
+#include <stdatomic.h>
 
 int qpng__have_avx2(void) {
-    static int v = -1;   /* benign race: every thread computes the same value */
 #if QPNG_X86
-    if (v < 0) { __builtin_cpu_init(); v = __builtin_cpu_supports("avx2") ? 1 : 0; }
+    static _Atomic(int) v = -1;   /* racing first callers all store the same value */
+    int r = atomic_load_explicit(&v, memory_order_relaxed);
+    if (r < 0) {
+        __builtin_cpu_init();
+        r = __builtin_cpu_supports("avx2") ? 1 : 0;
+        atomic_store_explicit(&v, r, memory_order_relaxed);
+    }
+    return r;
 #else
-    v = 0;
+    return 0;
 #endif
-    return v;
 }
 
 void *qpng__alloc(const qpng_allocator *a, size_t n) { return (a && a->alloc) ? a->alloc(a->user, n) : malloc(n); }
