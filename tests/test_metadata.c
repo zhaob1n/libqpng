@@ -2,7 +2,7 @@
  * (values from the PngSuite documentation), re-encode round trips, limits against compressed bombs, validation.
  * Usage: test_metadata PNGSUITE_DIR [files to re-encode...] */
 #include "qpng.h"
-#include "test_util.h"
+#include "test_common.h"
 static int fails;
 
 static uint8_t *enc(const qpng_metadata *m, qpng_color color, int depth, size_t *pn, qpng_status *st) {

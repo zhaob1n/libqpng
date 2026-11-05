@@ -2,7 +2,7 @@
  * the one-shot decode in every output mode; streaming encode (every preset, each backend, random row batches)
  * must round trip; error paths (truncation, CRC, callbacks, state). Usage: test_stream files... */
 #include "qpng.h"
-#include "test_util.h"
+#include "test_common.h"
 static int fails;
 static uint32_t rng = 12345;
 static uint32_t rnd(void) { rng = rng * 1103515245u + 12345u; return rng >> 8; }

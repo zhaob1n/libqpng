@@ -1,6 +1,10 @@
+# Shared helpers for the C tests (slurp, CHECK, ...).
+add_library(test_common STATIC test_common.c)
+qpng_modern_c(test_common)
+
 foreach(t api conformance roundtrip metadata stream apng)
   add_executable(test_${t} test_${t}.c)
-  target_link_libraries(test_${t} PRIVATE qpng)
+  target_link_libraries(test_${t} PRIVATE qpng test_common)
   qpng_modern_c(test_${t})
 endforeach()
 # test_deflate uses the vendored libdeflate directly (renamed symbols inside the qpng library)

@@ -1,7 +1,7 @@
 /* Round trip: decode (raw) -> encode with every preset and every fixed filter -> decode -> identical samples.
  * Covers every color type / bit depth in the corpus (palette with PLTE/tRNS carried over). */
 #include "qpng.h"
-#include "test_util.h"
+#include "test_common.h"
 #ifdef QPNG_TEST_ZLIB
 #include <zlib.h>
 /* the IDAT stream must also inflate with stock zlib, to h * (1 + rowbytes) bytes */

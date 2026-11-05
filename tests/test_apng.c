@@ -3,7 +3,7 @@
  * dispose / blend op against a straightforward reference compositor, raw frames, still images.
  * Usage: test_apng APNG_DIR [still.png...] */
 #include "qpng.h"
-#include "test_util.h"
+#include "test_common.h"
 static int fails;
 
 static qpng_status last_frame(const uint8_t *b, size_t n, uint8_t **canvas, qpng_apng_info *ai) {

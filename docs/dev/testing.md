@@ -1,7 +1,7 @@
 # Testing
 
 * `ctest`: api, conformance, roundtrip, metadata, stream, apng, symbols,
-  link_test, fuzz smoke. Run with and without zlib-ng (`-DQPNG_WITH_ZLIBNG=OFF`),
+  link_test, fuzz smoke. Shared helpers live in `tests/test_common.{c,h}`. Run with and without zlib-ng (`-DQPNG_WITH_ZLIBNG=OFF`),
   on GCC 16 and Clang 23.
 * `scripts/sanitize.sh`: ASan+UBSan + ctest (SIMD and `-DQPNG_NO_SIMD`), mutation
   fuzzing; libFuzzer when clang is available.

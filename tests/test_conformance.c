@@ -1,7 +1,7 @@
 /* Decode every test PNG (PngSuite + generated format corpus) in the three output modes and compare with the png
  * crate / image-rs reference hashes in data/refs.txt (tests/gen_refs.py). Files the reference rejects must fail. */
 #include "qpng.h"
-#include "test_util.h"
+#include "test_common.h"
 
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: test_conformance DATA_DIR\n"); return 2; }

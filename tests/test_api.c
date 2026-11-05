@@ -1,6 +1,6 @@
 /* API behaviour: argument validation, limits, allocator hooks, error paths. */
 #include "qpng.h"
-#include "test_util.h"
+#include "test_common.h"
 
 static size_t live, total_allocs;
 static void *my_alloc(void *u, size_t n) { (void)u; live++; total_allocs++; return malloc(n); }

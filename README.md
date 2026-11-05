@@ -1,6 +1,6 @@
 # qpng
 
-Fast, small PNG decoder and encoder in C11, built on a vendored and modified
+Fast, small PNG decoder and encoder in modern C (GNU C2y), built on a vendored and modified
 [libdeflate](https://github.com/ebiggers/libdeflate), plus an optional vendored [zlib-ng](https://github.com/zlib-ng/zlib-ng)
 encoder backend for graphics. Single header API, no other dependencies,
 runtime CPU dispatch on x86-64 (SSE2 baseline, AVX2 / BMI2 / AVX-512 where available; never `-march=native`).
@@ -128,7 +128,7 @@ Image mode, interlaced images and libdeflate-only builds buffer the compressed i
 one-shot path once IEND arrived (memory: file + image; image mode is then as fast as `qpng_decode`). The encoder
 compresses FASTEST/FAST with libdeflate's streamed png-ultra (as one-shot) and DEFAULT/BEST with zlib-ng L6/L9
 (png-ultra without zlib-ng); it filters row by row (no whole-image probing), so output can be a bit larger than
-`qpng_encode`'s. Measurements in NOTES.md (Phase 5).
+`qpng_encode`'s. Measurements in docs/archive/NOTES.md (Phase 5).
 
 ### APNG
 
@@ -185,7 +185,7 @@ Engineering progress log (archived): [`docs/archive/NOTES.md`](docs/archive/NOTE
 
 | backend | what runs |
 |---|---|
-| `QPNG_BACKEND_AUTO` (default) | per preset and content (measured, see NOTES.md "Phase 4"): libdeflate png-ultra for FASTEST/FAST, png-fast / libdeflate L6-L8 for photos, zlib-ng L6 (DEFAULT) / L9 chain 1024 (BEST) for graphics. Without zlib-ng: same as LIBDEFLATE |
+| `QPNG_BACKEND_AUTO` (default) | per preset and content (measured, see docs/archive/NOTES.md "Phase 4"): libdeflate png-ultra for FASTEST/FAST, png-fast / libdeflate L6-L8 for photos, zlib-ng L6 (DEFAULT) / L9 chain 1024 (BEST) for graphics. Without zlib-ng: same as LIBDEFLATE |
 | `QPNG_BACKEND_LIBDEFLATE` | libdeflate only: exactly the qpng 1.0 output |
 | `QPNG_BACKEND_ZLIBNG` | every stream through zlib-ng (FASTEST L1 = deflate_quick, FAST L2, DEFAULT L6, BEST L9; filter probing unchanged); `deflate_level` 1..9 and `zlib_strategy` (FILTERED, HUFFMAN_ONLY, RLE) select explicitly. `QPNG_ERR_UNSUPPORTED` when not built in |
 
