@@ -7,10 +7,10 @@
 static int fails;
 
 static qpng_status last_frame(const uint8_t *b, size_t n, uint8_t **canvas, qpng_apng_info *ai) {
-    qpng_apng *a; qpng_status s = qpng_apng_open(b, n, NULL, &a);
+    qpng_apng *a; qpng_status s = qpng_apng_open(b, n, nullptr, &a);
     if (s) return s;
     qpng_apng_get_info(a, ai);
-    const uint8_t *c = NULL, *t; qpng_frame_info fi; uint32_t k = 0;
+    const uint8_t *c = nullptr, *t; qpng_frame_info fi; uint32_t k = 0;
     while ((s = qpng_apng_next_frame(a, &t, &fi)) == QPNG_OK) { c = t; k++; }
     if (s == QPNG_ERR_STATE && k == ai->num_frames) s = QPNG_OK;
     if (!s) { size_t sz = (size_t)ai->image.width * ai->image.height * 4; *canvas = malloc(sz); memcpy(*canvas, c, sz); }
@@ -30,10 +30,12 @@ static int all_px(const uint8_t *c, size_t npx, int r, int g, int b, int al, int
 static void suite(const char *dir) {
     char path[4096];
     for (int i = 0; i <= 60; i++) {
+        if (i == 42) continue;   /* suite file disabled: was a no-op always-pass */
         snprintf(path, sizeof path, "%s/%03d.png", dir, i);
-        size_t n; uint8_t *b = slurp(path, &n);
+        size_t n = 0;
+        qpng_tool_autofree uint8_t *b = slurp(path, &n);
         if (!b) { fprintf(stderr, "missing %s\n", path); fails++; continue; }
-        uint8_t *c = NULL; qpng_apng_info ai;
+        uint8_t *c = nullptr; qpng_apng_info ai;
         qpng_status s = last_frame(b, n, &c, &ai);
         const size_t np = s ? 0 : (size_t)ai.image.width * ai.image.height;
         int ok = 1;
@@ -62,13 +64,11 @@ static void suite(const char *dir) {
             if (ok && i == 32) ok = ai.num_plays == 2;
         } else if (i == 39 || i == 41) {         /* no (usable) acTL: a still image */
             ok = s == QPNG_OK && !ai.animated && ai.num_frames == 1 && all_px(c, np, 0, 255, 0, 255, 0, 0);
-        } else if (i == 42) {
-            ok = 1;   /* disabled in the suite */
         } else {                                 /* invalid structure: rejected */
             ok = i >= 59 ? s != QPNG_OK : s == QPNG_ERR_APNG;   /* 059/060: fdAT data size mismatch, found when decoding */
         }
         if (!ok) { fprintf(stderr, "apng suite %03d: %s\n", i, s ? qpng_status_string(s) : "wrong pixels"); fails++; }
-        free(c); free(b);
+        free(c);
     }
 }
 
@@ -98,7 +98,7 @@ static void roundtrip(void) {
     uint32_t rng = 7;
     for (int i = 0; i < NF; i++) {
         qpng_frame_info *f = &fr[i].info;
-        memset(f, 0, sizeof *f);
+        *f = (qpng_frame_info){};
         if (i == 0) { f->width = W; f->height = H; }
         else { f->width = 1 + (rng = rng * 69069 + 1) % W; f->height = 1 + (rng = rng * 69069 + 1) % H;
                f->x_offset = (rng = rng * 69069 + 1) % (W - f->width + 1); f->y_offset = (rng = rng * 69069 + 1) % (H - f->height + 1); }
@@ -110,8 +110,8 @@ static void roundtrip(void) {
     }
     for (int def = 0; def < 2; def++) {
         uint8_t *png; size_t n;
-        CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, NF, 3, def ? px[1] : NULL, (size_t)W * 4, NULL, &png, &n) == QPNG_OK);
-        qpng_apng *a; CHECK(qpng_apng_open(png, n, NULL, &a) == QPNG_OK);
+        CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, NF, 3, def ? px[1] : nullptr, (size_t)W * 4, nullptr, &png, &n) == QPNG_OK);
+        qpng_apng *a; CHECK(qpng_apng_open(png, n, nullptr, &a) == QPNG_OK);
         qpng_apng_info ai; qpng_apng_get_info(a, &ai);
         CHECK(ai.animated && ai.num_frames == NF && ai.num_plays == 3 && ai.default_image_is_frame == !def);
         static float cv[W * H * 4], sv[W * H * 4];
@@ -121,7 +121,7 @@ static void roundtrip(void) {
             CHECK(qpng_apng_next_frame(a, &c, &fi) == QPNG_OK);
             CHECK(fi.width == fr[i].info.width && fi.x_offset == fr[i].info.x_offset && fi.delay_num == fr[i].info.delay_num &&
                   fi.blend_op == fr[i].info.blend_op);
-            ref_compose(cv, sv, W, &fr[i], i == 0, i ? &fr[i - 1].info : NULL);
+            ref_compose(cv, sv, W, &fr[i], i == 0, i ? &fr[i - 1].info : nullptr);
             for (size_t k = 0; k < sizeof cv / sizeof *cv; k++) {
                 int d = abs((int)c[k] - (int)(cv[k] + 0.5f));
                 if (c[k | 3] == 0 && (k & 3) != 3) d = 0;   /* color of fully transparent pixels is irrelevant */
@@ -129,7 +129,7 @@ static void roundtrip(void) {
             }
             /* keep the reference in 8 bits like the decoder */
             for (size_t k = 0; k < sizeof cv / sizeof *cv; k++) cv[k] = c[k];
-            qpng_image im; CHECK(qpng_apng_raw_frame(a, (uint32_t)i, NULL, &im, &fi) == QPNG_OK);
+            qpng_image im; CHECK(qpng_apng_raw_frame(a, (uint32_t)i, nullptr, &im, &fi) == QPNG_OK);
             CHECK(im.size == (size_t)fi.width * fi.height * 4 && !memcmp(im.pixels, px[i], im.size));
             qpng_image_free(&im);
         }
@@ -137,32 +137,32 @@ static void roundtrip(void) {
         CHECK(qpng_apng_next_frame(a, &c, &fi) == QPNG_ERR_STATE);
         qpng_apng_rewind(a); CHECK(qpng_apng_next_frame(a, &c, &fi) == QPNG_OK);
         qpng_apng_free(a);
-        qpng_image im; CHECK(qpng_decode(png, n, NULL, &im) == QPNG_OK && !memcmp(im.pixels, def ? px[1] : px[0], (size_t)W * H * 4));
+        qpng_image im; CHECK(qpng_decode(png, n, nullptr, &im) == QPNG_OK && !memcmp(im.pixels, def ? px[1] : px[0], (size_t)W * H * 4));
         qpng_image_free(&im);
-        qpng_buffer_free(png, NULL);
+        qpng_buffer_free(png, nullptr);
     }
     /* invalid: frame outside the canvas, frame 0 not covering the canvas without a separate default image */
     uint8_t *png; size_t n;
     fr[2].info.x_offset = W;
-    CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, NF, 0, NULL, 0, NULL, &png, &n) == QPNG_ERR_ARGUMENT);
+    CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, NF, 0, nullptr, 0, nullptr, &png, &n) == QPNG_ERR_ARGUMENT);
     fr[2].info.x_offset = 0;
-    CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr + 1, NF - 1, 0, NULL, 0, NULL, &png, &n) == QPNG_ERR_ARGUMENT);
+    CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr + 1, NF - 1, 0, nullptr, 0, nullptr, &png, &n) == QPNG_ERR_ARGUMENT);
 }
 
 static void stills(int argc, char **argv) {
     for (int i = 2; i < argc; i++) {
-        size_t n; uint8_t *b = slurp(argv[i], &n);
+        size_t n = 0;
+        qpng_tool_autofree uint8_t *b = slurp(argv[i], &n);
         if (!b) continue;
         qpng_image ref; qpng_decode_options o; qpng_decode_options_init(&o);
         if (qpng_decode(b, n, &o, &ref) == QPNG_OK) {
-            qpng_apng *a; CHECK(qpng_apng_open(b, n, NULL, &a) == QPNG_OK);
+            qpng_apng *a; CHECK(qpng_apng_open(b, n, nullptr, &a) == QPNG_OK);
             qpng_image im; qpng_frame_info fi;
-            CHECK(qpng_apng_raw_frame(a, 0, NULL, &im, &fi) == QPNG_OK && im.size == ref.size && !memcmp(im.pixels, ref.pixels, ref.size));
+            CHECK(qpng_apng_raw_frame(a, 0, nullptr, &im, &fi) == QPNG_OK && im.size == ref.size && !memcmp(im.pixels, ref.pixels, ref.size));
             qpng_image_free(&im);
             const uint8_t *c; CHECK(qpng_apng_next_frame(a, &c, &fi) == QPNG_OK);
             qpng_apng_free(a); qpng_image_free(&ref);
         }
-        free(b);
     }
 }
 

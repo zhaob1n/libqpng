@@ -15,11 +15,11 @@ int main(void) {
     int ok = 1;
     for (int b = QPNG_BACKEND_AUTO; b <= QPNG_BACKEND_ZLIBNG; b++) {
         if (!qpng_backend_available((qpng_backend)b)) continue;
-        qpng_encode_options o; qpng_encode_options_init(&o); o.backend = b; o.preset = QPNG_PRESET_BEST;
-        uint8_t *png; size_t pn; qpng_image im;
+        qpng_encode_options o = {}; qpng_encode_options_init(&o); o.backend = b; o.preset = QPNG_PRESET_BEST;
+        uint8_t *png = nullptr; size_t pn = 0; qpng_image im = {};
         ok &= qpng_encode(px, 64, 64, 0, QPNG_COLOR_RGB, 8, &o, &png, &pn) == QPNG_OK;
-        ok &= qpng_decode(png, pn, NULL, &im) == QPNG_OK && im.size == sizeof px && !memcmp(im.pixels, px, sizeof px);
-        qpng_image_free(&im); qpng_buffer_free(png, NULL);
+        ok &= qpng_decode(png, pn, nullptr, &im) == QPNG_OK && im.size == sizeof px && !memcmp(im.pixels, px, sizeof px);
+        qpng_image_free(&im); qpng_buffer_free(png, nullptr);
     }
 #ifdef QPNG_LINK_ZLIB_COMPAT
     uLongf zn = sizeof z, bn = sizeof back;
