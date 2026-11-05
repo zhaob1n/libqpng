@@ -143,25 +143,9 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     *outp = NULL; *outn = 0;
     if (!opts) { qpng_encode_options_init(&defo); opts = &defo; }
     const qpng_allocator *A = opts->allocator;
-    int ch;
-    switch (color) {
-    case QPNG_COLOR_GRAY: ch = 1; if (depth != 1 && depth != 2 && depth != 4 && depth != 8 && depth != 16) return QPNG_ERR_ARGUMENT; break;
-    case QPNG_COLOR_PALETTE: ch = 1; if (depth != 1 && depth != 2 && depth != 4 && depth != 8) return QPNG_ERR_ARGUMENT; break;
-    case QPNG_COLOR_RGB: ch = 3; goto d816;
-    case QPNG_COLOR_GRAY_ALPHA: ch = 2; goto d816;
-    case QPNG_COLOR_RGBA: ch = 4;
-    d816: if (depth != 8 && depth != 16) return QPNG_ERR_ARGUMENT; break;
-    default: return QPNG_ERR_ARGUMENT;
-    }
-    if (!pixels || !w || !h || w > 0x7FFFFFFFu || h > 0x7FFFFFFFu) return QPNG_ERR_ARGUMENT;
-    if (color == QPNG_COLOR_PALETTE && (!opts->palette || opts->palette_entries < 1 || opts->palette_entries > 256))
-        return QPNG_ERR_ARGUMENT;
-    if (opts->palette && (opts->palette_entries < 1 || opts->palette_entries > 256)) return QPNG_ERR_ARGUMENT;
-    if (opts->trns && (opts->trns_bytes < 1 || color == QPNG_COLOR_GRAY_ALPHA || color == QPNG_COLOR_RGBA ||
-                       (color == QPNG_COLOR_GRAY && opts->trns_bytes != 2) || (color == QPNG_COLOR_RGB && opts->trns_bytes != 6) ||
-                       (color == QPNG_COLOR_PALETTE && opts->trns_bytes > opts->palette_entries)))
-        return QPNG_ERR_ARGUMENT;
-    if (opts->metadata) { qpng_status ms = qpng__meta_validate(opts->metadata, color); if (ms != QPNG_OK) return ms; }
+    if (!pixels) return QPNG_ERR_ARGUMENT;
+    const int ch = qpng__check_encode_opts(opts, w, h, color, depth);
+    if (ch < 0) return ch;
     const int bits = ch * depth, bpp = bits >= 8 ? bits / 8 : 1;
     const size_t rowbytes = ((size_t)w * bits + 7) / 8;
     if (!stride) stride = rowbytes;
@@ -170,9 +154,6 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     const size_t rawn = (size_t)h * (rowbytes + 1);
 
     const int backend = opts->backend;
-    if (backend < QPNG_BACKEND_AUTO || backend > QPNG_BACKEND_ZLIBNG) return QPNG_ERR_ARGUMENT;
-    if (!qpng_backend_available((qpng_backend)backend)) return QPNG_ERR_UNSUPPORTED;
-    if (opts->zlib_strategy < 0 || opts->zlib_strategy > QPNG_ZSTRATEGY_RLE) return QPNG_ERR_ARGUMENT;
     const int zng = backend == QPNG_BACKEND_ZLIBNG;
     const int probe = opts->filter < 0 && !opts->deflate_level &&
                       (opts->preset == QPNG_PRESET_DEFAULT || opts->preset == QPNG_PRESET_BEST);
@@ -182,12 +163,10 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     case QPNG_PRESET_FAST: filter = QPNG_FILTER_ADAPTIVE; level = zng ? 2 : QPNG_DEFLATE_PNGULTRA; break;
     case QPNG_PRESET_DEFAULT: filter = QPNG_FILTER_ADAPTIVE; level = zng ? 6 : QPNG_DEFLATE_QPNG; break;
     case QPNG_PRESET_BEST: filter = QPNG_FILTER_ADAPTIVE; level = zng ? 9 : 10; break;
-    default: return QPNG_ERR_ARGUMENT;
+    default: unreachable();   /* qpng__check_encode_opts */
     }
-    if (opts->filter >= 0) { if (opts->filter > QPNG_FILTER_ADAPTIVE) return QPNG_ERR_ARGUMENT; filter = opts->filter; }
+    if (opts->filter >= 0) filter = opts->filter;
     if (opts->deflate_level) level = opts->deflate_level;
-    if (opts->search_depth < 0 || opts->search_depth > 65535 || opts->nice_length < 0 || opts->nice_length > 258)
-        return QPNG_ERR_ARGUMENT;
     const qpng_zcfg explicit_cfg = qpng__zcfg(zng ? QPNG_BACKEND_ZLIBNG : QPNG_BACKEND_LIBDEFLATE, level, opts->search_depth,
                                           opts->nice_length, 0, zng ? opts->zlib_strategy : 0);
     if (!qpng__zcfg_valid(&explicit_cfg)) return QPNG_ERR_ARGUMENT;
