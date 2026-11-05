@@ -12,8 +12,11 @@ bool qpng__backend_available(int backend) {
 }
 
 bool qpng__zcfg_valid(const qpng_zcfg c[static 1]) {
-    if (!qpng__backend_available(c->backend)) return false;
-    if (c->backend == QPNG_BACKEND_ZLIBNG) return c->level >= 1 && c->level <= 9 && c->strategy <= QPNG_ZSTRATEGY_RLE;
+    if (!qpng__backend_available(c->backend) || c->depth < 0 || c->depth > 65535 || c->nice < 0 || c->nice > 258 ||
+        c->minlen < 0 || c->minlen > 258)
+        return false;
+    if (c->backend == QPNG_BACKEND_ZLIBNG)
+        return c->level >= 1 && c->level <= 9 && c->strategy >= 0 && c->strategy <= QPNG_ZSTRATEGY_RLE;
     return (c->level >= 1 && c->level <= 12) || c->level == QPNG_DEFLATE_QPNG || c->level == QPNG_DEFLATE_QPNG_RLE ||
            c->level == QPNG_DEFLATE_QPNG_HIGH || c->level == QPNG_DEFLATE_PNGULTRA;
 }
@@ -36,8 +39,8 @@ static void ld_releasep(struct libdeflate_compressor **z) { libdeflate_free_comp
 static struct libdeflate_compressor *ld_make(const qpng_zcfg *c) {
     if (c->level < QPNG_DEFLATE_QPNG) {
         struct libdeflate_compressor *z = libdeflate_alloc_compressor(c->level);
-        if (z && (c->depth || c->nice)) libdeflate_set_search_params(z, c->depth, c->nice);
-        if (z && c->minlen) libdeflate_set_min_match_len(z, c->minlen);
+        if (z && (c->depth || c->nice)) libdeflate_set_search_params(z, (unsigned)c->depth, (unsigned)c->nice);
+        if (z && c->minlen) libdeflate_set_min_match_len(z, (unsigned)c->minlen);
         return z;
     }
     if (c->level == QPNG_DEFLATE_PNGULTRA) return libdeflate_alloc_compressor(LIBDEFLATE_PNG_ULTRA_LEVEL);

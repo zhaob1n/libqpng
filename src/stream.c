@@ -388,7 +388,7 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
     /* signature, IHDR, metadata (before PLTE), PLTE, tRNS, metadata (before IDAT): one write */
     QPNG_CLEANUP(qpng__wb_release) qpng__wbuf hd = { .A = e->A };
     uint8_t ihdr[13];
-    qpng__put_ihdr(ihdr, w, h, depth, color);
+    qpng__put_ihdr(ihdr, w, h, depth, (int)color);
     qpng__wb_put(&hd, QPNG__SIG, sizeof QPNG__SIG);
     qpng__wb_chunk(&hd, "IHDR", ihdr, sizeof ihdr);
     if (opts->metadata) qpng__meta_write(&hd, opts->metadata, 0);

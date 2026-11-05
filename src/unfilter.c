@@ -10,14 +10,14 @@
  */
 #include "internal.h"
 
-QPNG_INLINE void unf_scalar_t(int f, uint8_t *restrict dst, const uint8_t *src, const uint8_t *restrict prev, size_t n, const int bpp) {
+QPNG_INLINE void unf_scalar_t(int f, uint8_t *restrict dst, const uint8_t *src, const uint8_t *restrict prev, size_t n, const size_t bpp) {
     size_t i;
     switch (f) {
     case 0:
         memmove(dst, src, n);
         break;
     case 1:
-        for (i = 0; i < (size_t)bpp; i++) dst[i] = src[i];
+        for (i = 0; i < bpp; i++) dst[i] = src[i];
         for (; i < n; i++) dst[i] = src[i] + dst[i - bpp];
         break;
     case 2:
@@ -26,21 +26,21 @@ QPNG_INLINE void unf_scalar_t(int f, uint8_t *restrict dst, const uint8_t *src, 
         break;
     case 3:
         if (!prev) {
-            for (i = 0; i < (size_t)bpp; i++) dst[i] = src[i];
+            for (i = 0; i < bpp; i++) dst[i] = src[i];
             for (; i < n; i++) dst[i] = src[i] + (dst[i - bpp] >> 1);
             break;
         }
-        for (i = 0; i < (size_t)bpp; i++) dst[i] = src[i] + (prev[i] >> 1);
+        for (i = 0; i < bpp; i++) dst[i] = src[i] + (prev[i] >> 1);
         for (; i < n; i++) dst[i] = src[i] + ((dst[i - bpp] + prev[i]) >> 1);
         break;
     case 4:
         if (!prev) {
-            for (i = 0; i < (size_t)bpp; i++) dst[i] = src[i];
+            for (i = 0; i < bpp; i++) dst[i] = src[i];
             for (; i < n; i++) dst[i] = src[i] + dst[i - bpp];
             break;
         }
-        for (i = 0; i < (size_t)bpp; i++) dst[i] = src[i] + prev[i];
-        for (; i < n; i++) dst[i] = src[i] + paeth_s(dst[i - bpp], prev[i], prev[i - bpp]);
+        for (i = 0; i < bpp; i++) dst[i] = src[i] + prev[i];
+        for (; i < n; i++) dst[i] = (uint8_t)(src[i] + paeth_s(dst[i - bpp], prev[i], prev[i - bpp]));
         break;
     }
 }
@@ -65,7 +65,7 @@ static void unf_scalar(int f, uint8_t *dst, const uint8_t *src, const uint8_t *p
     case 4: unf_scalar_t(f, dst, src, prev, n, 4); break;
     case 6: unf_scalar_t(f, dst, src, prev, n, 6); break;
     case 8: unf_scalar_t(f, dst, src, prev, n, 8); break;
-    default: unf_scalar_t(f, dst, src, prev, n, bpp);
+    default: unf_scalar_t(f, dst, src, prev, n, (size_t)bpp);
     }
 }
 
@@ -81,31 +81,31 @@ static void unf_up(uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t
 /* Per-pixel SIMD for 3/4 bytes per pixel: pixels live in the low 3/4 lanes. 4-byte loads/stores (safe: see above;
  * the buffer has >= 16 bytes of tail padding). */
 #define PX_LOOP_BEGIN(bpp) size_t i = 0; for (; i + 4 <= n + (bpp == 3); i += bpp) {
-static void unf_sub_px(uint8_t *dst, const uint8_t *src, size_t n, int bpp) {
+static void unf_sub_px(uint8_t *dst, const uint8_t *src, size_t n, size_t bpp) {
     __m128i a = _mm_setzero_si128();
     PX_LOOP_BEGIN(bpp)
-        a = _mm_add_epi8(a, _mm_cvtsi32_si128(ld32(src + i)));
-        st32(dst + i, _mm_cvtsi128_si32(a));
+        a = _mm_add_epi8(a, _mm_cvtsi32_si128((int)ld32(src + i)));
+        st32(dst + i, (uint32_t)_mm_cvtsi128_si32(a));
     }
     (void)i;
 }
-static void unf_avg_px(uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, int bpp) {
+static void unf_avg_px(uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, size_t bpp) {
     const __m128i one = _mm_set1_epi8(1);
     __m128i a = _mm_setzero_si128();
     PX_LOOP_BEGIN(bpp)
-        __m128i b = _mm_cvtsi32_si128(ld32(prev + i)), x = _mm_cvtsi32_si128(ld32(src + i));
+        __m128i b = _mm_cvtsi32_si128((int)ld32(prev + i)), x = _mm_cvtsi32_si128((int)ld32(src + i));
         __m128i avg = _mm_sub_epi8(_mm_avg_epu8(a, b), _mm_and_si128(_mm_xor_si128(a, b), one));   /* floor((a+b)/2) */
         a = _mm_add_epi8(x, avg);
-        st32(dst + i, _mm_cvtsi128_si32(a));
+        st32(dst + i, (uint32_t)_mm_cvtsi128_si32(a));
     }
     (void)i;
 }
-static void unf_paeth_px(uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, int bpp) {
+static void unf_paeth_px(uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, size_t bpp) {
     const __m128i z = _mm_setzero_si128(), ff = _mm_set1_epi16(0xff);
     __m128i a = z, c = z;
     PX_LOOP_BEGIN(bpp)
-        __m128i b = _mm_unpacklo_epi8(_mm_cvtsi32_si128(ld32(prev + i)), z);
-        __m128i x = _mm_unpacklo_epi8(_mm_cvtsi32_si128(ld32(src + i)), z);
+        __m128i b = _mm_unpacklo_epi8(_mm_cvtsi32_si128((int)ld32(prev + i)), z);
+        __m128i x = _mm_unpacklo_epi8(_mm_cvtsi32_si128((int)ld32(src + i)), z);
         __m128i c3b = _mm_sub_epi16(_mm_add_epi16(c, _mm_add_epi16(c, c)), b);   /* off the a-chain */
         __m128i th = _mm_sub_epi16(c3b, a);
         __m128i lo = _mm_min_epi16(a, b), hi = _mm_max_epi16(a, b);
@@ -114,7 +114,7 @@ static void unf_paeth_px(uint8_t *dst, const uint8_t *src, const uint8_t *prev, 
         __m128i m2 = _mm_cmpgt_epi16(th, lo);
         __m128i t1 = _mm_or_si128(_mm_and_si128(m2, t0), _mm_andnot_si128(m2, hi));
         a = _mm_and_si128(_mm_add_epi16(x, t1), ff);
-        st32(dst + i, _mm_cvtsi128_si32(_mm_packus_epi16(a, a)));
+        st32(dst + i, (uint32_t)_mm_cvtsi128_si32(_mm_packus_epi16(a, a)));
         c = b;
     }
     (void)i;
@@ -129,11 +129,11 @@ static inline __m128i paeth_step(__m128i a, __m128i b, __m128i c, __m128i x) {
 #define STEP(F, a, b, c, x) ((F) == 1 ? _mm_and_si128(_mm_add_epi16(x, a), ff) :                                   \
                              (F) == 3 ? _mm_and_si128(_mm_add_epi16(x, _mm_srli_epi16(_mm_add_epi16(a, b), 1)), ff) : \
                              paeth_step(a, b, c, x))
-#define LD16(p) _mm_unpacklo_epi8(_mm_cvtsi32_si128(ld32(p)), z)
-#define ST16(p, v) st32(p, _mm_cvtsi128_si32(_mm_packus_epi16(v, v)))
+#define LD16(p) _mm_unpacklo_epi8(_mm_cvtsi32_si128((int)ld32(p)), z)
+#define ST16(p, v) st32(p, (uint32_t)_mm_cvtsi128_si32(_mm_packus_epi16(v, v)))
 #define DEF_PAIR(F0, F1)                                                                                          \
 static void pair_##F0##F1(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, uint8_t *d1, const uint8_t *s1,      \
-                          size_t n, int bpp) {                                                                    \
+                          size_t n, size_t bpp) {                                                                 \
     const __m128i z = _mm_setzero_si128(), ff = _mm_set1_epi16(0xff);                                             \
     __m128i a0 = z, c0 = z, a1 = z, c1 = z, b1 = z;                                                               \
     __m128i r0 = paeth_step(z, LD16(p0), z, LD16(s0)); /* pixel 0 of row 0: every filter reduces to x + f(0,b,0) */ \
@@ -147,7 +147,7 @@ static void pair_##F0##F1(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, uin
         r0 = STEP(F0, a0, b, c0, x);                                                                              \
         a1 = STEP(F1, a1, b1, c1, x1);                                                                            \
         c1 = b1; b1 = r0;                                                                                         \
-        if (i + bpp < n) ST16(d0 + i, r0); else { uint32_t v = _mm_cvtsi128_si32(_mm_packus_epi16(r0, r0)); memcpy(d0 + i, &v, bpp); } \
+        if (i + bpp < n) ST16(d0 + i, r0); else { uint32_t v = (uint32_t)_mm_cvtsi128_si32(_mm_packus_epi16(r0, r0)); memcpy(d0 + i, &v, bpp); } \
         ST16(d1 + i - bpp, a1);                                                                                   \
         a0 = r0; c0 = b;                                                                                          \
     }                                                                                                             \
@@ -168,7 +168,7 @@ static qpng_pair_fn pair_for(int f0, int f1) {
 #define STW_LAST(p, v, bpp) do { uint8_t t_[16]; _mm_storeu_si128((__m128i *)t_, _mm_packus_epi16(v, v)); memcpy(p, t_, bpp); } while (0)
 #define DEF_PAIRW(F0, F1)                                                                                         \
 static void pairw_##F0##F1(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, uint8_t *d1, const uint8_t *s1,     \
-                           size_t n, int bpp) {                                                                   \
+                           size_t n, size_t bpp) {                                                                \
     const __m128i z = _mm_setzero_si128(), ff = _mm_set1_epi16(0xff);                                             \
     __m128i a0 = z, c0 = z, a1 = z, c1 = z, b1 = z;                                                               \
     __m128i r0 = paeth_step(z, LDW(p0), z, LDW(s0));                                                              \
@@ -194,9 +194,9 @@ DEF_PAIRW(1, 1) DEF_PAIRW(1, 3) DEF_PAIRW(1, 4) DEF_PAIRW(3, 1) DEF_PAIRW(3, 3) 
 /* bpp 1/2: scalar two-row wavefront (row y+1 lags row y by one pixel) -> two independent dependency chains */
 #define DEF_PAIRS(B, F0, F1)                                                                                      \
 static void pairs##B##_##F0##F1(uint8_t *restrict d0, const uint8_t *restrict s0, const uint8_t *restrict p0,     \
-                                uint8_t *restrict d1, const uint8_t *restrict s1, size_t n, int bpp) {            \
+                                uint8_t *restrict d1, const uint8_t *restrict s1, size_t n, size_t bpp) {         \
     (void)bpp; size_t i;                                                                                          \
-    for (i = 0; i < B; i++) { d0[i] = s0[i] + qpng__pred(F0, 0, p0[i], 0); d1[i] = s1[i] + qpng__pred(F1, 0, d0[i], 0); } \
+    for (i = 0; i < B; i++) { d0[i] = (uint8_t)(s0[i] + qpng__pred(F0, 0, p0[i], 0)); d1[i] = (uint8_t)(s1[i] + qpng__pred(F1, 0, d0[i], 0)); } \
     if (B == 1) {                                                                                                 \
         int a0 = d0[0], c0 = p0[0], a1 = d1[0], c1 = d0[0];                                                       \
         for (; i < n; i++) {                                                                                      \
@@ -204,8 +204,8 @@ static void pairs##B##_##F0##F1(uint8_t *restrict d0, const uint8_t *restrict s0
             a1 = (uint8_t)(s1[i] + qpng__pred(F1, a1, a0, c1)); c1 = a0; d1[i] = (uint8_t)a1;                        \
         }                                                                                                         \
     } else for (; i < n; i++) {                                                                                   \
-        d0[i] = s0[i] + qpng__pred(F0, d0[i - B], p0[i], p0[i - B]);                                                  \
-        d1[i] = s1[i] + qpng__pred(F1, d1[i - B], d0[i], d0[i - B]);                                                  \
+        d0[i] = (uint8_t)(s0[i] + qpng__pred(F0, d0[i - B], p0[i], p0[i - B]));                                      \
+        d1[i] = (uint8_t)(s1[i] + qpng__pred(F1, d1[i - B], d0[i], d0[i - B]));                                      \
     }                                                                                                             \
 }
 #define DEF_PAIRS_B(B) DEF_PAIRS(B,1,1) DEF_PAIRS(B,1,3) DEF_PAIRS(B,1,4) DEF_PAIRS(B,3,1) DEF_PAIRS(B,3,3) \
@@ -242,7 +242,7 @@ qpng_pair_fn qpng__pair_for_bpp(int f0, int f1, int bpp) {
 #endif
 #if QPNG_X86
 #define DEF_ROWW(F)                                                                                               \
-static void roww_##F(uint8_t *d, const uint8_t *s, const uint8_t *p, size_t n, int bpp) {                         \
+static void roww_##F(uint8_t *d, const uint8_t *s, const uint8_t *p, size_t n, size_t bpp) {                      \
     const __m128i z = _mm_setzero_si128(), ff = _mm_set1_epi16(0xff);                                             \
     __m128i a = z, c = z;                                                                                         \
     for (size_t i = 0; i < n; i += bpp) {                                                                         \
@@ -268,25 +268,25 @@ void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *
     if (bpp == 1) { unf_bpp1(f, dst, src, prev, n); return; }
     if ((bpp == 6 || bpp == 8) && n >= 16) {
         switch (f) {
-        case 1: roww_1(dst, src, nullptr, n, bpp); return;
-        case 3: if (prev) roww_3(dst, src, prev, n, bpp); else unf_scalar(3, dst, src, prev, n, bpp); return;
-        case 4: if (prev) roww_4(dst, src, prev, n, bpp); else roww_1(dst, src, nullptr, n, bpp); return;
+        case 1: roww_1(dst, src, nullptr, n, (size_t)bpp); return;
+        case 3: if (prev) roww_3(dst, src, prev, n, (size_t)bpp); else unf_scalar(3, dst, src, prev, n, bpp); return;
+        case 4: if (prev) roww_4(dst, src, prev, n, (size_t)bpp); else roww_1(dst, src, nullptr, n, (size_t)bpp); return;
         }
     }
     if ((bpp != 3 && bpp != 4) || n < 8) { unf_scalar(f, dst, src, prev, n, bpp); return; }
     switch (f) {
-    case 1: unf_sub_px(dst, src, n, bpp); break;
-    case 3: if (prev) unf_avg_px(dst, src, prev, n, bpp); else unf_scalar(3, dst, src, prev, n, bpp); break;
-    case 4: if (prev) unf_paeth_px(dst, src, prev, n, bpp); else unf_sub_px(dst, src, n, bpp); break;
+    case 1: unf_sub_px(dst, src, n, (size_t)bpp); break;
+    case 3: if (prev) unf_avg_px(dst, src, prev, n, (size_t)bpp); else unf_scalar(3, dst, src, prev, n, bpp); break;
+    case 4: if (prev) unf_paeth_px(dst, src, prev, n, (size_t)bpp); else unf_sub_px(dst, src, n, (size_t)bpp); break;
     }
 #endif
 }
 
 #if QPNG_X86
-#define LDX(p) _mm_unpacklo_epi8(_mm_cvtsi32_si128(ld32(p)), _mm_setzero_si128())
+#define LDX(p) _mm_unpacklo_epi8(_mm_cvtsi32_si128((int)ld32(p)), _mm_setzero_si128())
 /* Four consecutive Paeth rows as a wavefront: row g lags row g-1 by one pixel; 4 x 16-bit-lane pixels per AVX2 vector. */
 [[gnu::target("avx2")]] void qpng__quad_paeth_avx2(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, size_t stride,
-                                                 size_t rs, size_t n, int bpp) {
+                                                 size_t rs, size_t n, size_t bpp) {
     const __m256i ff = _mm256_set1_epi16(0xff), z = _mm256_setzero_si256();
 
     const long npx = (long)(n / bpp);
@@ -295,9 +295,9 @@ void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *
         const int edge = k < 3 || k >= npx;
         __m128i xs[4];
         for (int g = 0; g < 4; g++) { long j = k - g;
-            xs[g] = (j >= 0 && j < npx) ? LDX(s0 + g * rs + j * bpp) : _mm_setzero_si128(); }
+            xs[g] = (j >= 0 && j < npx) ? LDX(s0 + (size_t)g * rs + (size_t)j * bpp) : _mm_setzero_si128(); }
         __m256i x = _mm256_set_m128i(_mm_unpacklo_epi64(xs[2], xs[3]), _mm_unpacklo_epi64(xs[0], xs[1]));
-        __m256i pv = _mm256_zextsi128_si256(k < npx ? LDX(p0 + k * bpp) : _mm_setzero_si128());
+        __m256i pv = _mm256_zextsi128_si256(k < npx ? LDX(p0 + (size_t)k * bpp) : _mm_setzero_si128());
         __m256i a = r, c = bprev;
         __m256i b = _mm256_blend_epi32(_mm256_permute4x64_epi64(r, _MM_SHUFFLE(2, 1, 0, 3)), pv, 0x03);
         bprev = b;
@@ -316,7 +316,7 @@ void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *
         uint32_t o[4] = { (uint32_t)_mm_cvtsi128_si32(plo), (uint32_t)_mm_extract_epi32(plo, 1),
                           (uint32_t)_mm_cvtsi128_si32(phi), (uint32_t)_mm_extract_epi32(phi, 1) };
         for (int g = 0; g < 4; g++) { long j = k - g;
-            if (j >= 0 && j < npx) { uint8_t *dp = d0 + g * stride + j * bpp;
+            if (j >= 0 && j < npx) { uint8_t *dp = d0 + (size_t)g * stride + (size_t)j * bpp;
                 if (j + 1 < npx) st32(dp, o[g]); else memcpy(dp, &o[g], bpp); } }
     }
 }

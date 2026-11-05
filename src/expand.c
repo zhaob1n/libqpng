@@ -13,20 +13,20 @@ void qpng__xform_setup(qpng_xform *c, int color, int depth, int ich, uint32_t W,
     if (expand && color == 3) {
         c->xf = XF_PAL; c->alpha = !!trns; och = c->alpha ? 4 : 3; odepth = 8; ocolor = c->alpha ? 6 : 2;
         for (int i = 0; i < 256; i++) c->lut[i] = 0xFF000000u;
-        for (uint32_t i = 0; i < plen; i++) c->lut[i] = 0xFF000000u | plte[3 * i] | plte[3 * i + 1] << 8 | (uint32_t)plte[3 * i + 2] << 16;
+        for (uint32_t i = 0; i < plen; i++) c->lut[i] = 0xFF000000u | plte[3 * i] | (uint32_t)(plte[3 * i + 1] << 8) | (uint32_t)plte[3 * i + 2] << 16;
         if (trns && tlen <= plen) for (uint32_t i = 0; i < tlen; i++) c->lut[i] = (c->lut[i] & 0x00FFFFFFu) | (uint32_t)trns[i] << 24;
     } else if (expand && color == 0 && depth < 8) {
         c->xf = XF_GRAY; c->alpha = !!trns; c->scale = 255 / ((1 << depth) - 1); och = c->alpha ? 2 : 1; odepth = 8; ocolor = c->alpha ? 4 : 0;
         if (trns) c->trns[0] = trns[1];
         for (int b = 0; b < 256; b++) for (int k = 0; k < 8 / depth; k++) {
             uint32_t v = (uint32_t)(b >> (8 - depth * (k + 1))) & ((1u << depth) - 1);
-            if (c->alpha) { c->glut[b][2 * k] = (uint8_t)(v * c->scale); c->glut[b][2 * k + 1] = v == c->trns[0] ? 0 : 255; }
-            else c->glut[b][k] = (uint8_t)(v * c->scale);
+            if (c->alpha) { c->glut[b][2 * k] = (uint8_t)(v * (uint32_t)c->scale); c->glut[b][2 * k + 1] = v == c->trns[0] ? 0 : 255; }
+            else c->glut[b][k] = (uint8_t)(v * (uint32_t)c->scale);
         }
     } else if (expand && trns && (color == 0 || color == 2)) {
         och = ich + 1; ocolor = color == 0 ? 4 : 6;
         if (depth == 8) { c->xf = XF_TRNS8; for (int k = 0; k < ich; k++) c->trns[k] = trns[2 * k + 1]; }
-        else { c->xf = XF_TRNS16; memcpy(c->trns, trns, 2 * ich); }
+        else { c->xf = XF_TRNS16; memcpy(c->trns, trns, (size_t)(2 * ich)); }
     } else if (native16) c->xf = XF_SWAP16;
     *och_ = och; *odepth_ = odepth; *ocolor_ = ocolor;
 }
@@ -53,13 +53,13 @@ void qpng__xform_row(const qpng_xform *c, const uint8_t *s, uint8_t *o, uint32_t
         break;
     case XF_GRAY:   /* 1/2/4-bit gray -> 8-bit (scaled), optionally + alpha */
     {   /* one table lookup per packed input byte; the last (partial) byte is done per pixel */
-        const uint32_t spb = 8 / d, full = w / spb, ob = spb * (c->alpha ? 2 : 1);
+        const uint32_t spb = (uint32_t)(8 / d), full = w / spb, ob = spb * (c->alpha ? 2 : 1);
 #define GL(N) for (uint32_t j = 0; j < full; j++) memcpy(o + (size_t)j * N, c->glut[s[j]], N); break;
         switch (ob) { case 2: GL(2) case 4: GL(4) case 8: GL(8) case 16: GL(16) }
 #undef GL
         for (uint32_t i = full * spb; i < w; i++) {
             uint32_t v = qpng__unpack(s, i, d);
-            if (c->alpha) { o[2 * i] = (uint8_t)(v * c->scale); o[2 * i + 1] = v == c->trns[0] ? 0 : 255; } else o[i] = (uint8_t)(v * c->scale);
+            if (c->alpha) { o[2 * i] = (uint8_t)(v * (uint32_t)c->scale); o[2 * i + 1] = v == c->trns[0] ? 0 : 255; } else o[i] = (uint8_t)(v * (uint32_t)c->scale);
         }
         break; }
     case XF_TRNS8: {
@@ -73,8 +73,8 @@ void qpng__xform_row(const qpng_xform *c, const uint8_t *s, uint8_t *o, uint32_t
     case XF_TRNS16: {
         const int ch = c->ich, sw = c->native16;
         for (uint32_t i = 0; i < w; i++) {
-            const uint8_t *p = s + 2 * ch * i; uint8_t *q = o + 2 * (ch + 1) * i;
-            int t = !memcmp(p, c->trns, 2 * ch);
+            const uint8_t *p = s + (uint32_t)(2 * ch) * i; uint8_t *q = o + (uint32_t)(2 * (ch + 1)) * i;
+            int t = !memcmp(p, c->trns, (size_t)(2 * ch));
             for (int k = 0; k < ch; k++) { q[2 * k] = p[2 * k + sw]; q[2 * k + 1] = p[2 * k + 1 - sw]; }
             q[2 * ch] = q[2 * ch + 1] = t ? 0 : 255;
         }

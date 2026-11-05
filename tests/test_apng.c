@@ -84,9 +84,9 @@ static void ref_compose(float *cv, float *saved, uint32_t W, const qpng_apng_fra
         saved[o] = cv[o]; saved[o + 1] = cv[o + 1]; saved[o + 2] = cv[o + 2]; saved[o + 3] = cv[o + 3];
         const uint8_t *s = (const uint8_t *)f->pixels + y * f->stride + x * 4;
         float as = s[3] / 255.f, ad = cv[o + 3] / 255.f;
-        if (f->info.blend_op == QPNG_BLEND_SOURCE) { for (int k = 0; k < 4; k++) cv[o + k] = s[k]; continue; }
+        if (f->info.blend_op == QPNG_BLEND_SOURCE) { for (size_t k = 0; k < 4; k++) cv[o + k] = s[k]; continue; }
         float oa = as + ad * (1 - as);
-        for (int k = 0; k < 3; k++) cv[o + k] = oa > 0 ? (s[k] * as + cv[o + k] * ad * (1 - as)) / oa : 0;
+        for (size_t k = 0; k < 3; k++) cv[o + k] = oa > 0 ? (s[k] * as + cv[o + k] * ad * (1 - as)) / oa : 0;
         cv[o + 3] = oa * 255.f;
     }
 }

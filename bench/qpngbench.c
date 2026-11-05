@@ -34,7 +34,7 @@ static void dump(const char *file, const char *tag, const void *d, size_t n) {
     qpng_tool_autoclose FILE *f = fopen(path, "wb");
     if (f) fwrite(d, 1, n, f);
 }
-static int parse_preset(const char *s) {
+static qpng_preset parse_preset(const char *s) {
     return !strncmp(s, "fastest", 7) ? QPNG_PRESET_FASTEST : !strncmp(s, "fast", 4) ? QPNG_PRESET_FAST :
            !strncmp(s, "best", 4) ? QPNG_PRESET_BEST : QPNG_PRESET_DEFAULT;
 }
@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
                 {
                     struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
                     if (!strcmp(param, "pairs")) libdeflate_set_pair_literals(d, 1);
-                    rc = libdeflate_zlib_decompress(d, st, sn, out, n, &got);
+                    rc = (int)libdeflate_zlib_decompress(d, st, sn, out, n, &got);
                     libdeflate_free_decompressor(d);
                 }
                 long long dt = now_ns() - t0;
@@ -199,9 +199,9 @@ int main(int argc, char **argv) {
             }
             int pl = 0, tl = 0;
             o.palette = qpng_tool_find_chunk(buf, n, "PLTE", &pl);
-            o.palette_entries = o.palette ? (uint32_t)(pl / 3) : 0;
+            o.palette_entries = o.palette ? pl / 3 : 0;
             o.trns = qpng_tool_find_chunk(buf, n, "tRNS", &tl);
-            o.trns_bytes = o.trns ? (uint32_t)tl : 0;
+            o.trns_bytes = o.trns ? tl : 0;
             for (int r = 0; r <= reps; r++) {
                 uint8_t *png = nullptr;
                 size_t pn = 0;

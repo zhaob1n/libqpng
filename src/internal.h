@@ -135,11 +135,11 @@ void qpng__wb_chunk(qpng__wbuf *w, const char type[static 4], const void *d, siz
 
 /* ---- unfilter.c ---- */
 typedef void (*qpng_pair_fn)(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, uint8_t *d1, const uint8_t *s1,
-                           size_t n, int bpp);
+                           size_t n, size_t bpp);
 void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n, int bpp);
 qpng_pair_fn qpng__pair_for_bpp(int f0, int f1, int bpp);
 #if QPNG_X86
-void qpng__quad_paeth_avx2(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, size_t stride, size_t rs, size_t n, int bpp);
+void qpng__quad_paeth_avx2(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, size_t stride, size_t rs, size_t n, size_t bpp);
 #endif
 
 /* ---- expand.c: output transforms applied to unfiltered rows ---- */
@@ -159,7 +159,7 @@ void qpng__xform_setup(qpng_xform *x, int color, int depth, int ich, uint32_t W,
 void qpng__xform_row(const qpng_xform *x, const uint8_t *s, uint8_t *o, uint32_t w);
 void qpng__swap16(uint8_t *p, size_t n);
 static inline uint32_t qpng__unpack(const uint8_t *s, uint32_t i, int d) {   /* MSB-first packed sample i */
-    uint32_t bit = i * (uint32_t)d; return (uint32_t)(s[bit >> 3] >> (8 - d - (bit & 7))) & ((1u << d) - 1);
+    uint32_t bit = i * (uint32_t)d; return (uint32_t)(s[bit >> 3] >> ((uint32_t)(8 - d) - (bit & 7))) & ((1u << d) - 1);
 }
 
 /* ---- filter_enc.c: forward filtering (encoder) ---- */

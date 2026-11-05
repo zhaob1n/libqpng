@@ -19,7 +19,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const uint32_t w = 1 + data[1] % 64, h = 1 + data[2] % 64;
     const int knob = data[3], knob2 = data[2] ^ data[0];   /* knob2: backend, zlib strategy */
     data += 4; size -= 4;
-    const size_t rowbytes = ((size_t)w * FMT[f].ch * FMT[f].d + 7) / 8, n = rowbytes * h;
+    const size_t rowbytes = ((size_t)w * (size_t)(FMT[f].ch * FMT[f].d) + 7) / 8, n = rowbytes * h;
     uint8_t *px = malloc(n ? n : 1);
     if (!px) return 0;
     /* pixels: the input repeated (keeps repetitive structure that exercises the match finders) */

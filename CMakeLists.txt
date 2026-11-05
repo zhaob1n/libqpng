@@ -33,7 +33,7 @@ if(NOT QPNG_CC_GNU2Y)
   message(FATAL_ERROR "qpng needs a C compiler with -std=gnu2y (GCC 16 or Clang 23); "
                       "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION} has none")
 endif()
-set(QPNG_C_FLAGS -std=gnu2y -fms-extensions -Wall -Wextra)
+set(QPNG_C_FLAGS -std=gnu2y -fms-extensions -Wall -Wextra -Wconversion)
 if(QPNG_CC_MS_ANON_TAG)
   list(APPEND QPNG_C_FLAGS -Wno-microsoft-anon-tag)
 endif()

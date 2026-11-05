@@ -49,7 +49,7 @@ int main(void) {
             size_t n = sizes[si];
             qpng_tool_autofree unsigned char *in = malloc(n + 1);
             qpng_tool_autofree unsigned char *z = malloc(n + n / 8 + 4096);
-            gen(in + 1, n, kind, (unsigned)(si * 7 + kind));
+            gen(in + 1, n, kind, (unsigned)si * 7 + (unsigned)kind);
             for (size_t li = 0; li < sizeof levels / sizeof *levels; li++) {
                 int lv = levels[li];
                 struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL

@@ -52,9 +52,9 @@ int main(int argc, char **argv) {
         if (argc > 6) o.deflate_level = atoi(argv[6]);
         int pl = 0, tl = 0;
         o.palette = qpng_tool_find_chunk(buf, n, "PLTE", &pl);
-        o.palette_entries = o.palette ? (uint32_t)(pl / 3) : 0;
+        o.palette_entries = o.palette ? pl / 3 : 0;
         o.trns = qpng_tool_find_chunk(buf, n, "tRNS", &tl);
-        o.trns_bytes = o.trns ? (uint32_t)tl : 0;
+        o.trns_bytes = o.trns ? tl : 0;
         uint8_t *png = nullptr;
         size_t pn = 0;
         s = qpng_encode(im.pixels, im.width, im.height, im.stride, (qpng_color)im.color_type, im.bit_depth, &o, &png, &pn);

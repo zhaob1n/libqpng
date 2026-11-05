@@ -53,7 +53,7 @@ static void process_rows(qpng_dec *c, size_t pos, int final) {
                     if (f1 > 4 || f2 > 4 || f3 > 4) { c->err = QPNG_ERR_FILTER; c->y = c->H; return; }
                     if (f == 4 && f1 == 4 && f2 == 4 && f3 == 4) {
 #if QPNG_X86
-                        qpng__quad_paeth_avx2(dst, src, prev, stride, rs, stride, bpp); prev = dst + 3 * stride; y += 4; continue;
+                        qpng__quad_paeth_avx2(dst, src, prev, stride, rs, stride, (size_t)bpp); prev = dst + 3 * stride; y += 4; continue;
 #endif
                     }
                 } else if (!final) break;
@@ -63,7 +63,7 @@ static void process_rows(qpng_dec *c, size_t pos, int final) {
                 if (y + 1 >= ylim) { if (!final) break; }      /* keep the pair together: wait for row y+1 */
                 else if (src[stride] <= 4) pair = qpng__pair_for_bpp(f, src[stride], bpp);
             }
-            if (pair) { pair(dst, src, prev, dst + stride, src + stride + 1, stride, bpp); prev = dst + stride; y += 2; continue; }
+            if (pair) { pair(dst, src, prev, dst + stride, src + stride + 1, stride, (size_t)bpp); prev = dst + stride; y += 2; continue; }
             qpng__unfilter_row(f, dst, src, prev, stride, bpp);
             prev = dst; y++;
         }
@@ -150,7 +150,7 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     const uint32_t W = in.width, H = in.height;
     const int depth = in.bit_depth, color = in.color_type, interlace = in.interlaced, ich = in.channels;
     const int bits = ich * depth, bpp = bits >= 8 ? bits / 8 : 1;
-    const size_t stride = ((size_t)W * bits + 7) / 8;
+    const size_t stride = ((size_t)W * (size_t)bits + 7) / 8;
 
     /* pass 1: chunk layout (rules as in the png crate: PLTE/tRNS before IDAT, no duplicates, no unknown critical
      * chunks); ancillary chunks (gAMA, sRGB, iCCP, text, APNG acTL/fcTL/fdAT, ...) are skipped. */
@@ -185,7 +185,7 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     qpng_dec c = {};
     int och, odepth, ocolor;
     qpng__xform_setup(&c.x, color, depth, ich, W, opts->output, plte, plen, trns, tlen, &och, &odepth, &ocolor);
-    const size_t ostride = ((size_t)W * och * odepth + 7) / 8;
+    const size_t ostride = ((size_t)W * (size_t)och * (size_t)odepth + 7) / 8;
     c.ostride = ostride;
     /* raw (filtered) size */
     size_t rawn = 0, rs = stride + 1;
@@ -194,7 +194,7 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     } else for (int ps = 0; ps < 7; ps++) {
         if (W <= A7[ps][0] || H <= A7[ps][1]) continue;
         size_t pw = (W - A7[ps][0] + A7[ps][2] - 1) / A7[ps][2], ph = (H - A7[ps][1] + A7[ps][3] - 1) / A7[ps][3];
-        size_t prow = 1 + (pw * bits + 7) / 8, add;
+        size_t prow = 1 + (pw * (size_t)bits + 7) / 8, add;
         if (qpng__mul_size(&add, ph, prow) || qpng__add_size(&rawn, rawn, add)) return QPNG_ERR_LIMITS;
     }
     const size_t off = interlace ? 0 : 4 * stride;   /* raw rows sit >= 4 output rows ahead (in-place 4-row kernel) */
@@ -267,7 +267,7 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
             uint32_t x0 = A7[ps][0], y0 = A7[ps][1], dx = A7[ps][2], dy = A7[ps][3];
             if (W <= x0 || H <= y0) continue;
             uint32_t pw = (W - x0 + dx - 1) / dx, ph = (H - y0 + dy - 1) / dy;
-            size_t pst = ((size_t)pw * bits + 7) / 8;
+            size_t pst = ((size_t)pw * (size_t)bits + 7) / 8;
             const uint8_t *prev = nullptr;
             for (uint32_t j = 0; j < ph; j++, q += pst + 1) {
                 int f = q[0]; if (f > 4) return QPNG_ERR_FILTER;
@@ -280,12 +280,12 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
                 uint8_t *orow = (uint8_t *)obuf.p + (size_t)(y0 + j * dy) * ostride;
                 if (opx) {
 #define SC(N) for (uint32_t i = 0; i < pw; i++) memcpy(orow + (size_t)(x0 + i * dx) * N, px + (size_t)i * N, N); break;
-                    switch (opx) { case 1: SC(1) case 2: SC(2) case 3: SC(3) case 4: SC(4) case 6: SC(6) case 8: SC(8) default: SC(opx) }
+                    switch (opx) { case 1: SC(1) case 2: SC(2) case 3: SC(3) case 4: SC(4) case 6: SC(6) case 8: SC(8) default: SC((size_t)opx) }
 #undef SC
                 } else {   /* raw sub-8-bit output: bit scatter (MSB first) */
                     for (uint32_t i = 0; i < pw; i++) {
                         uint32_t v = qpng__unpack(px, i, obits), bit = (x0 + i * dx) * (uint32_t)obits;
-                        orow[bit >> 3] |= (uint8_t)(v << (8 - obits - (bit & 7)));
+                        orow[bit >> 3] |= (uint8_t)(v << ((uint32_t)(8 - obits) - (bit & 7)));
                     }
                 }
             }

@@ -8,12 +8,13 @@
 #include "internal.h"
 
 typedef struct {
-    uint8_t backend;    /* QPNG_BACKEND_LIBDEFLATE or QPNG_BACKEND_ZLIBNG (never AUTO) */
-    uint8_t strategy;   /* zlib-ng: QPNG_ZSTRATEGY_*; ignored by libdeflate */
-    uint8_t minlen;     /* libdeflate levels 2-12: fixed minimum match length (0 = libdeflate's choice) */
-    int16_t level;      /* libdeflate 1..12 / QPNG_DEFLATE_PNG*; zlib-ng 1..9 */
-    uint16_t depth;     /* search depth (libdeflate max_search_depth, zlib-ng max_chain); 0 = level default */
-    uint16_t nice;      /* nice match length; 0 = level default */
+    /* plain ints: out-of-range values reach qpng__zcfg_valid instead of being truncated into range */
+    int backend;    /* QPNG_BACKEND_LIBDEFLATE or QPNG_BACKEND_ZLIBNG (never AUTO) */
+    int strategy;   /* zlib-ng: QPNG_ZSTRATEGY_*; ignored by libdeflate */
+    int minlen;     /* libdeflate levels 2-12: fixed minimum match length (0 = libdeflate's choice) */
+    int level;      /* libdeflate 1..12 / QPNG_DEFLATE_PNG*; zlib-ng 1..9 */
+    int depth;      /* search depth (libdeflate max_search_depth, zlib-ng max_chain); 0 = level default */
+    int nice;       /* nice match length; 0 = level default */
 } qpng_zcfg;
 
 /* Built with designated-initializer literals; omitted fields are 0 = "backend / level default":
