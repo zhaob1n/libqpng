@@ -277,7 +277,7 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
             }
         }
     }
-    qpng__owned_release(&filt);   /* the largest buffer: before the IDAT layout touches more pages */
+    qpng__free(A, qpng__take(&filt));   /* the largest buffer: before the IDAT layout touches more pages */
     if (!zn) return st != QPNG_OK ? st : QPNG_ERR_ENCODE;
     for (size_t done = 0; done < zn;) {
         uint32_t len = (uint32_t)((zn - done) < 0x40000000u ? zn - done : 0x40000000u);
