@@ -2,9 +2,6 @@
 #ifndef QPNG_METADATA_H
 #define QPNG_METADATA_H
 #include "internal.h"
-/* zlib stream -> new buffer (allocator A) of at most `limit` bytes; nullptr if invalid / too large */
-uint8_t *qpng__inflate_limited(const uint8_t *src, size_t n, size_t limit, const qpng_allocator *A, size_t *outn);
-
 /* Growable output buffer (allocator A) that frames PNG chunks. The first error sticks and turns every later write
  * into a no-op, so writers check `err` once at the end; on error the caller frees `p`. */
 typedef struct { uint8_t *p; size_t n, cap; const qpng_allocator *A; qpng_status err; } qpng__wbuf;
