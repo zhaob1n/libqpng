@@ -6,6 +6,23 @@ static size_t live, total_allocs;
 static void *my_alloc(void *u, size_t n) { (void)u; live++; total_allocs++; return malloc(n); }
 static void my_free(void *u, void *p) { (void)u; live--; free(p); }
 
+static int writes;
+static int count_write(void *u, const uint8_t *d, size_t n) { (void)u; (void)d; (void)n; writes++; return 0; }
+
+/* One-shot and streaming encoders must agree on an option: same status, and a rejected stream writes nothing. */
+static qpng_status both(const uint8_t *px, const qpng_encode_options *e) {
+    uint8_t *png = nullptr; size_t pn = 0;
+    const qpng_status s1 = qpng_encode(px, 3, 2, 0, QPNG_COLOR_RGB, 8, e, &png, &pn);
+    if (s1 == QPNG_OK) qpng_buffer_free(png, nullptr);
+    else if (png) return QPNG_ERR_ENCODE;   /* failed call left an output behind */
+    qpng_encoder *enc = nullptr;
+    writes = 0;
+    const qpng_status s2 = qpng_encoder_new(3, 2, QPNG_COLOR_RGB, 8, e, count_write, nullptr, &enc);
+    if (s2 == QPNG_OK) qpng_encoder_free(enc);
+    else if (enc || writes) return QPNG_ERR_ENCODE;
+    return s1 == s2 ? s1 : QPNG_ERR_ENCODE;
+}
+
 int main(void) {
     int fails = 0;
     /* tiny 3x2 RGB8 image round trip with a custom allocator */
@@ -96,6 +113,28 @@ int main(void) {
         } else {
             CHECK(qpng_encode(px, 3, 2, 0, QPNG_COLOR_RGB, 8, &e, &png, &pn) == QPNG_ERR_UNSUPPORTED);
         }
+    }
+    {   /* option ranges: one past each edge is QPNG_ERR_ARGUMENT, the edge itself is accepted */
+        qpng_encode_options e;
+        qpng_encode_options_init(&e);
+        e.filter = QPNG_FILTER_AUTO - 1;     /* master silently treated this as AUTO */
+        CHECK(both(px, &e) == QPNG_ERR_ARGUMENT);
+        e.filter = QPNG_FILTER_ADAPTIVE + 1;
+        CHECK(both(px, &e) == QPNG_ERR_ARGUMENT);
+        e.filter = QPNG_FILTER_AUTO;
+        CHECK(both(px, &e) == QPNG_OK);
+        const int bad_depth[] = { -1, 65536 }, bad_nice[] = { -1, 259 };
+        for (int i = 0; i < 2; i++) {
+            e.search_depth = bad_depth[i];
+            CHECK(both(px, &e) == QPNG_ERR_ARGUMENT);
+            e.search_depth = 0;
+            e.nice_length = bad_nice[i];
+            CHECK(both(px, &e) == QPNG_ERR_ARGUMENT);
+            e.nice_length = 0;
+        }
+        e.search_depth = 65535;
+        e.nice_length = 258;
+        CHECK(both(px, &e) == QPNG_OK);
     }
     /* stride > row bytes + every preset on a padded buffer */
     uint8_t padded[2 * 32];
