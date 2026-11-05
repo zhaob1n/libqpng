@@ -2,7 +2,7 @@
  *
  * dst may alias src shifted backwards by >= 1 byte (in-place compaction: raw row y lives at y*(stride+1)+1, final
  * row y at y*stride); all loops load before they store and never store past a byte they have not yet loaded.
- * prev == NULL means the first row of an image / pass.
+ * prev == nullptr means the first row of an image / pass.
  *
  * Kernels: scalar (any bpp; bpp 1 with register-carried neighbours), SSE2 per-pixel for bpp 3/4, 16-bit-lane
  * kernels for bpp 6/8, two-row wavefronts (two independent dependency chains interleaved) for bpp 1/2/3/4/6/8,
@@ -10,7 +10,7 @@
  */
 #include "internal.h"
 
-static inline __attribute__((always_inline)) void unf_scalar_t(int f, uint8_t *restrict dst, const uint8_t *src, const uint8_t *restrict prev, size_t n, const int bpp) {
+QPNG_INLINE void unf_scalar_t(int f, uint8_t *restrict dst, const uint8_t *src, const uint8_t *restrict prev, size_t n, const int bpp) {
     size_t i;
     switch (f) {
     case 0:
@@ -71,7 +71,7 @@ static void unf_scalar(int f, uint8_t *dst, const uint8_t *src, const uint8_t *p
 
 #if QPNG_X86
 /* Up: pure vertical add, vectorised (AVX2 clone selected at load time via ifunc). */
-__attribute__((target_clones("avx2", "default")))
+[[gnu::target_clones("avx2", "default")]]
 static void unf_up(uint8_t *dst, const uint8_t *src, const uint8_t *prev, size_t n) {
     size_t i = 0;
     for (; i + 16 <= n; i += 16)
@@ -165,7 +165,7 @@ static qpng_pair_fn pair_for(int f0, int f1) {
     static const qpng_pair_fn t[5][5] = { [1] = { [1] = pair_11, [3] = pair_13, [4] = pair_14 },
                                      [3] = { [1] = pair_31, [3] = pair_33, [4] = pair_34 },
                                      [4] = { [1] = pair_41, [3] = pair_43, [4] = pair_44 } };
-    return (f0 < 5 && f1 < 5) ? t[f0][f1] : NULL;
+    return (f0 < 5 && f1 < 5) ? t[f0][f1] : nullptr;
 }
 
 /* ---- v3: 6/8-byte pixels (16-bit RGB/RGBA): same 16-bit-lane kernels with 8-byte loads/stores ---- */
@@ -198,7 +198,7 @@ static void pairw_##F0##F1(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, ui
 DEF_PAIRW(1, 1) DEF_PAIRW(1, 3) DEF_PAIRW(1, 4) DEF_PAIRW(3, 1) DEF_PAIRW(3, 3) DEF_PAIRW(3, 4) DEF_PAIRW(4, 1) DEF_PAIRW(4, 3) DEF_PAIRW(4, 4)
 #endif /* QPNG_X86 */
 /* bpp 1/2: scalar two-row wavefront (row y+1 lags row y by one pixel) -> two independent dependency chains */
-static inline __attribute__((always_inline)) int pred_s(int F, int a, int b, int c) {
+QPNG_INLINE int pred_s(int F, int a, int b, int c) {
     return F == 1 ? a : F == 2 ? b : F == 3 ? (a + b) >> 1 : paeth_s(a, b, c);
 }
 #define DEF_PAIRS(B, F0, F1)                                                                                      \
@@ -231,10 +231,10 @@ qpng_pair_fn qpng__pair_for_bpp(int f0, int f1, int bpp) {
     static const qpng_pair_fn t2[5][5] = { [1] = { [1] = pairs2_11, [3] = pairs2_13, [4] = pairs2_14 },
                                       [3] = { [1] = pairs2_31, [3] = pairs2_33, [4] = pairs2_34 },
                                       [4] = { [1] = pairs2_41, [3] = pairs2_43, [4] = pairs2_44 } };
-    if (bpp == 1) return (f0 < 5 && f1 < 5) ? t1[f0][f1] : NULL;
-    if (bpp == 2) return (f0 < 5 && f1 < 5) ? t2[f0][f1] : NULL;
+    if (bpp == 1) return (f0 < 5 && f1 < 5) ? t1[f0][f1] : nullptr;
+    if (bpp == 2) return (f0 < 5 && f1 < 5) ? t2[f0][f1] : nullptr;
     if (bpp <= 4) return pair_for(f0, f1);
-    return (f0 < 5 && f1 < 5) ? t[f0][f1] : NULL;
+    return (f0 < 5 && f1 < 5) ? t[f0][f1] : nullptr;
 }
 #else
 /* portable: scalar two-row wavefront for every pixel size */
@@ -245,7 +245,7 @@ DEF_PAIRS_B(3) DEF_PAIRS_B(4) DEF_PAIRS_B(6) DEF_PAIRS_B(8)
 qpng_pair_fn qpng__pair_for_bpp(int f0, int f1, int bpp) {
     static const qpng_pair_fn t[9][5][5] = { [1] = PAIR_TABLE(1), [2] = PAIR_TABLE(2), [3] = PAIR_TABLE(3),
                                            [4] = PAIR_TABLE(4), [6] = PAIR_TABLE(6), [8] = PAIR_TABLE(8) };
-    return (bpp >= 1 && bpp <= 8 && f0 < 5 && f1 < 5) ? t[bpp][f0][f1] : NULL;
+    return (bpp >= 1 && bpp <= 8 && f0 < 5 && f1 < 5) ? t[bpp][f0][f1] : nullptr;
 }
 #undef PAIR_TABLE
 #endif
@@ -272,10 +272,10 @@ void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *
     if ((bpp == 6 || bpp == 8) && n >= 16) {
         switch (f) {
         case 0: memmove(dst, src, n); return;
-        case 1: roww_1(dst, src, NULL, n, bpp); return;
+        case 1: roww_1(dst, src, nullptr, n, bpp); return;
         case 2: if (prev) unf_up(dst, src, prev, n); else memmove(dst, src, n); return;
         case 3: if (prev) roww_3(dst, src, prev, n, bpp); else unf_scalar(3, dst, src, prev, n, bpp); return;
-        case 4: if (prev) roww_4(dst, src, prev, n, bpp); else roww_1(dst, src, NULL, n, bpp); return;
+        case 4: if (prev) roww_4(dst, src, prev, n, bpp); else roww_1(dst, src, nullptr, n, bpp); return;
         }
     }
     if ((bpp != 3 && bpp != 4) || n < 8) { unf_scalar(f, dst, src, prev, n, bpp); return; }
@@ -292,7 +292,7 @@ void qpng__unfilter_row(int f, uint8_t *dst, const uint8_t *src, const uint8_t *
 #if QPNG_X86
 #define LDX(p) _mm_unpacklo_epi8(_mm_cvtsi32_si128(ld32(p)), _mm_setzero_si128())
 /* Four consecutive Paeth rows as a wavefront: row g lags row g-1 by one pixel; 4 x 16-bit-lane pixels per AVX2 vector. */
-__attribute__((target("avx2"))) void qpng__quad_paeth_avx2(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, size_t stride,
+[[gnu::target("avx2")]] void qpng__quad_paeth_avx2(uint8_t *d0, const uint8_t *s0, const uint8_t *p0, size_t stride,
                                                  size_t rs, size_t n, int bpp) {
     const __m256i ff = _mm256_set1_epi16(0xff), z = _mm256_setzero_si256();
 
