@@ -8,8 +8,7 @@ void qpng__xform_setup(qpng_xform *c, int color, int depth, int ich, uint32_t W,
                      const uint8_t *plte, uint32_t plen, const uint8_t *trns, uint32_t tlen,
                      int *och_, int *odepth_, int *ocolor_) {
     const int expand = output != QPNG_OUTPUT_RAW, native16 = output == QPNG_OUTPUT_IMAGERS && depth == 16;
-    memset(c, 0, sizeof *c);
-    c->depth = depth; c->ich = ich; c->W = W; c->native16 = native16;
+    *c = (qpng_xform){ .depth = depth, .ich = ich, .W = W, .native16 = native16 };
     int och = ich, odepth = depth, ocolor = color;
     if (expand && color == 3) {
         c->xf = XF_PAL; c->alpha = !!trns; och = c->alpha ? 4 : 3; odepth = 8; ocolor = c->alpha ? 6 : 2;
@@ -37,6 +36,7 @@ void qpng__xform_row(const qpng_xform *c, const uint8_t *s, uint8_t *o, uint32_t
     const int d = c->depth;
     switch (c->xf) {
     case XF_PAL:
+        /* d==8 is the hot LUT path; keep 1/2/4 as separate loops so unpack shifts stay constant. */
         if (c->alpha) {
             if (d == 8) for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[s[i]]);
             else if (d == 4) for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[qpng__unpack(s, i, 4)]);
@@ -44,10 +44,10 @@ void qpng__xform_row(const qpng_xform *c, const uint8_t *s, uint8_t *o, uint32_t
             else for (uint32_t i = 0; i < w; i++) st32(o + 4 * i, c->lut[qpng__unpack(s, i, 1)]);
         } else {
             uint32_t i = 0;
-            if (d == 8) { for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[s[i]]); }
-            else if (d == 4) { for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 4)]); }
-            else if (d == 2) { for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 2)]); }
-            else { for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 1)]); }
+            if (d == 8) for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[s[i]]);
+            else if (d == 4) for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 4)]);
+            else if (d == 2) for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 2)]);
+            else for (; i + 1 < w; i++) st32(o + 3 * i, c->lut[qpng__unpack(s, i, 1)]);
             if (i < w) { uint32_t v = c->lut[d == 8 ? s[i] : qpng__unpack(s, i, d)]; memcpy(o + 3 * i, &v, 3); }
         }
         break;
