@@ -106,7 +106,7 @@ if(QPNG_BUILD_SHARED)
 endif()
 
 # public API symbol list, from the header
-file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/include/qpng.h QPNG_API_LINES REGEX "^QPNG_API ")
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/include/qpng.h QPNG_API_LINES REGEX "^(\\[\\[nodiscard\\]\\] )?QPNG_API ")
 set(QPNG_EXPORTS "")
 foreach(l ${QPNG_API_LINES})
   string(REGEX MATCH "(qpng_[a-z0-9_]+)\\(" m "${l}")

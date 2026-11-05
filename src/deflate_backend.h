@@ -40,14 +40,14 @@ size_t qpng__zcompress_ultra_rows(const uint8_t *px, size_t stride, uint32_t h, 
 /* compressed-output sink; returns QPNG_OK or an error that aborts the stream */
 typedef qpng_status (*qpng_zsink)(void *ctx, const uint8_t *data, size_t n);
 typedef struct qpng_zstream qpng_zstream;
-/* streamable configs: libdeflate QPNG_DEFLATE_PNGULTRA, zlib-ng levels 1-9 (else NULL with *st = UNSUPPORTED) */
+/* streamable configs: libdeflate QPNG_DEFLATE_PNGULTRA, zlib-ng levels 1-9 (else nullptr with *st = UNSUPPORTED) */
 qpng_zstream *qpng__zstream_new(const qpng_zcfg *c, const qpng_allocator *A, qpng_zsink sink, void *ctx, qpng_status *st);
 /* compress the next n bytes (png-ultra: n <= QPNG_ZSTREAM_MAX_CHUNK and in[-1] readable); final ends the stream */
 qpng_status qpng__zstream_write(qpng_zstream *z, const uint8_t *in, size_t n, int final);
 void qpng__zstream_free(qpng_zstream *z);
 #define QPNG_ZSTREAM_MAX_CHUNK (262144 + 4096)
 
-/* raw-deflate streaming inflate (zlib-ng only; NULL without it) */
+/* raw-deflate streaming inflate (zlib-ng only; nullptr without it) */
 typedef struct qpng_zistream qpng_zistream;
 qpng_zistream *qpng__zistream_new(const qpng_allocator *A);
 /* inflate from in[0..n) into out[0..cap); *used / *made report progress; returns 1 at end of the deflate stream,

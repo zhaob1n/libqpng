@@ -53,8 +53,9 @@ static void suite(const char *dir) {
         } else if (i >= 25 && i <= 32) {         /* timing files: valid, several frames */
             ok = s == QPNG_OK && ai.num_frames >= 2;
             if (ok && i == 28) {   /* zero denominator is reported as stored */
-                qpng_apng *a; qpng_apng_open(b, n, NULL, &a); qpng_image im; qpng_frame_info fi;
-                ok = qpng_apng_raw_frame(a, 0, NULL, &im, &fi) == QPNG_OK; qpng_image_free(&im); qpng_apng_free(a);
+                qpng_apng *a; qpng_image im; qpng_frame_info fi;
+                ok = qpng_apng_open(b, n, nullptr, &a) == QPNG_OK;
+                if (ok) { ok = qpng_apng_raw_frame(a, 0, nullptr, &im, &fi) == QPNG_OK; qpng_image_free(&im); qpng_apng_free(a); }
             }
             if (ok && i == 30) ok = ai.num_plays == 0;
             if (ok && i == 31) ok = ai.num_plays == 1;
