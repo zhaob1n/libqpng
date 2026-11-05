@@ -116,11 +116,13 @@ static inline uint32_t qpng__unpack(const uint8_t *s, uint32_t i, int d) {   /* 
  * mode: 0..4 = fixed filter (row 0 uses None for Up / Sub for Paeth / Avg as specified by PNG semantics: the fixed
  * filter is applied as-is, prev = zeros), 5 = adaptive (min sum |signed residual|). */
 void qpng__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t rowbytes, int bpp, int mode);
-/* internal filter mode: adaptive with a bias towards Up (graphics) */
-#define QPNG__FILTER_ADAPTIVE_GFX 6
-/* QPNG__FILTER_ADAPTIVE_GFX without Paeth: opaque graphics (Paeth residuals rarely beat None/Sub/Up there and cost
- * the most to evaluate; -1% size, faster) */
-#define QPNG__FILTER_ADAPTIVE_FLAT 7
+/* internal filter modes beyond qpng_filter */
+enum : uint8_t {
+    QPNG__FILTER_ADAPTIVE_GFX = QPNG_FILTER_ADAPTIVE + 1,   /* adaptive with a bias towards Up (graphics) */
+    /* ..._GFX without Paeth: opaque graphics (Paeth residuals rarely beat None/Sub/Up there and cost the most to
+     * evaluate; -1% size, faster) */
+    QPNG__FILTER_ADAPTIVE_FLAT,
+};
 /* rows [y0, y1) only, written to dst from its start (row y0 - 1 is the Up/Avg/Paeth predecessor) */
 void qpng__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0, uint32_t y1, size_t n, int bpp,
                      int mode);
