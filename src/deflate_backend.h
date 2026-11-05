@@ -16,13 +16,8 @@ typedef struct {
     uint16_t nice;      /* nice match length; 0 = level default */
 } qpng_zcfg;
 
-/* Preferred: designated-initializer literals (omitted fields are 0 = "backend / level default"):
- *   (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 5, .minlen = 3 }
- * qpng__zcfg() remains for call sites not yet converted (stream.c). */
-static inline qpng_zcfg qpng__zcfg(int backend, int level, int depth, int nice, int minlen, int strategy) {
-    return (qpng_zcfg){ .backend = (uint8_t)backend, .strategy = (uint8_t)strategy, .minlen = (uint8_t)minlen,
-                        .level = (int16_t)level, .depth = (uint16_t)depth, .nice = (uint16_t)nice };
-}
+/* Built with designated-initializer literals; omitted fields are 0 = "backend / level default":
+ *   (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 5, .minlen = 3 } */
 
 [[nodiscard]] bool qpng__backend_available(int backend);
 /* level in range for its backend, backend compiled in */

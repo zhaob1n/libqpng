@@ -342,28 +342,8 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
     qpng_encode_options defo;
     if (!opts) { qpng_encode_options_init(&defo); opts = &defo; }
     if (!write) return QPNG_ERR_ARGUMENT;
-    /* argument validation: run qpng_encode's checks on a 1-row dummy is not possible without pixels; replicate */
-    int ch;
-    switch (color) {
-    case QPNG_COLOR_GRAY: ch = 1; if (depth != 1 && depth != 2 && depth != 4 && depth != 8 && depth != 16) return QPNG_ERR_ARGUMENT; break;
-    case QPNG_COLOR_PALETTE: ch = 1; if (depth != 1 && depth != 2 && depth != 4 && depth != 8) return QPNG_ERR_ARGUMENT; break;
-    case QPNG_COLOR_RGB: ch = 3; if (depth != 8 && depth != 16) return QPNG_ERR_ARGUMENT; break;
-    case QPNG_COLOR_GRAY_ALPHA: ch = 2; if (depth != 8 && depth != 16) return QPNG_ERR_ARGUMENT; break;
-    case QPNG_COLOR_RGBA: ch = 4; if (depth != 8 && depth != 16) return QPNG_ERR_ARGUMENT; break;
-    default: return QPNG_ERR_ARGUMENT;
-    }
-    if (!w || !h || w > 0x7FFFFFFFu || h > 0x7FFFFFFFu) return QPNG_ERR_ARGUMENT;
-    if (color == QPNG_COLOR_PALETTE && (!opts->palette || opts->palette_entries < 1 || opts->palette_entries > 256)) return QPNG_ERR_ARGUMENT;
-    if (opts->palette && (opts->palette_entries < 1 || opts->palette_entries > 256)) return QPNG_ERR_ARGUMENT;
-    if (opts->trns && (opts->trns_bytes < 1 || color == QPNG_COLOR_GRAY_ALPHA || color == QPNG_COLOR_RGBA ||
-                       (color == QPNG_COLOR_GRAY && opts->trns_bytes != 2) || (color == QPNG_COLOR_RGB && opts->trns_bytes != 6) ||
-                       (color == QPNG_COLOR_PALETTE && opts->trns_bytes > opts->palette_entries)))
-        return QPNG_ERR_ARGUMENT;
-    if (opts->metadata) { qpng_status ms = qpng__meta_validate(opts->metadata, color); if (ms) return ms; }
-    if (opts->backend < QPNG_BACKEND_AUTO || opts->backend > QPNG_BACKEND_ZLIBNG || (unsigned)opts->preset > QPNG_PRESET_BEST ||
-        opts->filter < -1 || opts->filter > QPNG_FILTER_ADAPTIVE || opts->zlib_strategy < 0 || opts->zlib_strategy > QPNG_ZSTRATEGY_RLE)
-        return QPNG_ERR_ARGUMENT;
-    if (!qpng_backend_available((qpng_backend)opts->backend)) return QPNG_ERR_UNSUPPORTED;
+    const int ch = qpng__check_encode_opts(opts, w, h, color, depth);
+    if (ch < 0) return ch;
     const int bits = ch * depth;
     size_t n;
     if (qpng__mul_size(&n, w, (size_t)bits) || qpng__add_size(&n, n, 7)) return QPNG_ERR_LIMITS;
@@ -376,9 +356,11 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
     int use_zng = opts->backend == QPNG_BACKEND_ZLIBNG || (opts->backend == QPNG_BACKEND_AUTO && !fast && zng_ok);
     int level = opts->deflate_level;
     if (level && !use_zng && level != QPNG_DEFLATE_PNGULTRA) return QPNG_ERR_UNSUPPORTED;   /* libdeflate levels: not streamable */
-    const qpng_zcfg zc = use_zng ? qpng__zcfg(QPNG_BACKEND_ZLIBNG, level ? level : (int[]){ 1, 2, 6, 9 }[opts->preset],
-                                          opts->search_depth, opts->nice_length, 0, opts->zlib_strategy)
-                               : qpng__zcfg(QPNG_BACKEND_LIBDEFLATE, QPNG_DEFLATE_PNGULTRA, 0, 0, 0, 0);
+    const qpng_zcfg zc = use_zng ? (qpng_zcfg){ .backend = QPNG_BACKEND_ZLIBNG,
+                                                .level = level ? level : (int[]){ 1, 2, 6, 9 }[opts->preset],
+                                                .depth = opts->search_depth, .nice = opts->nice_length,
+                                                .strategy = opts->zlib_strategy }
+                                 : (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = QPNG_DEFLATE_PNGULTRA };
     if (!qpng__zcfg_valid(&zc)) return QPNG_ERR_ARGUMENT;
 
     const qpng_allocator *A = opts->allocator;
