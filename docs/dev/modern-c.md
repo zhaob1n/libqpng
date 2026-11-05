@@ -82,3 +82,9 @@ Before adding a helper, look in `src/internal.h` / `src/common.c`:
   loops in `expand.c` (constant unpack shifts).
 * Filter values below `QPNG_FILTER_AUTO` (-1) are rejected (master accepted
   them as AUTO).
+* One-shot `qpng_decode` parses IHDR through `qpng__parse_ihdr`, which applies
+  the size limits, so an oversized image with a bad IHDR CRC returns
+  `QPNG_ERR_LIMITS` where master returned the CRC error. The incremental
+  stream decoder still checks the IHDR CRC first.
+* The stream encoder (`qpng_encoder_new`) now range-checks `search_depth` and
+  `nice_length` like `qpng_encode` (`QPNG_ERR_ARGUMENT`).
