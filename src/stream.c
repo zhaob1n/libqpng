@@ -105,11 +105,16 @@ static qpng_status d_begin_image(qpng_decoder *d) {
     const uint64_t maxout = d->o.max_output_bytes ? d->o.max_output_bytes : (1ull << 30);
     if (!d->row_cb && (uint64_t)d->ostride * in->height > maxout) return QPNG_ERR_LIMITS;
     if (d->buffered) return QPNG_OK;
-    d->zi = qpng__zistream_new(dA(d));
+    const qpng_allocator *A = dA(d);
+    d->zi = qpng__zistream_new(A);
     if (!d->zi) return QPNG_ERR_NOMEM;
-    d->prev = qpng__alloc(dA(d), d->stride + 64); d->cur = qpng__alloc(dA(d), d->rs + 64);
-    d->orow = qpng__alloc(dA(d), d->ostride + d->stride + 64);
-    if (!d->prev || !d->cur || !d->orow) return QPNG_ERR_NOMEM;
+    qpng_owned prev = { A, qpng__alloc(A, d->stride + 64) };
+    qpng_owned cur = { A, qpng__alloc(A, d->rs + 64) };
+    qpng_owned orow = { A, qpng__alloc(A, d->ostride + d->stride + 64) };
+    if (!prev.p || !cur.p || !orow.p) return QPNG_ERR_NOMEM;
+    d->prev = qpng__take(&prev);
+    d->cur = qpng__take(&cur);
+    d->orow = qpng__take(&orow);
     return QPNG_OK;
 }
 
@@ -263,25 +268,26 @@ qpng_status qpng_decoder_finish(qpng_decoder *d, qpng_image *img) {
     return QPNG_OK;
 }
 
+static void decoder_freep(qpng_decoder **dp) { qpng_decoder_free(*dp); *dp = nullptr; }
+
 qpng_status qpng_decode_stream(qpng_read_fn rd, void *ru, const qpng_decode_options *opts, qpng_row_fn row_cb, void *row_user,
                            qpng_image *img) {
     if (img) *img = (qpng_image){};
     if (!rd || (!row_cb && !img)) return QPNG_ERR_ARGUMENT;
-    qpng_decoder *d;
+    QPNG_CLEANUP(decoder_freep) qpng_decoder *d = nullptr;
     qpng_status s = qpng_decoder_new(opts, row_cb, row_user, &d);
     if (s) return s;
-    uint8_t *buf = qpng__alloc(opts ? opts->allocator : nullptr, 65536);
-    if (!buf) { qpng_decoder_free(d); return QPNG_ERR_NOMEM; }
+    const qpng_allocator *A = opts ? opts->allocator : nullptr;
+    qpng_owned buf = { A, qpng__alloc(A, 65536) };
+    if (!buf.p) return QPNG_ERR_NOMEM;
     s = QPNG_MORE_DATA;
     while (s == QPNG_MORE_DATA) {
-        size_t k = rd(ru, buf, 65536);
+        size_t k = rd(ru, buf.p, 65536);
         if (k == (size_t)-1) { s = QPNG_ERR_ABORTED; break; }
         if (!k) { s = QPNG_ERR_DEFLATE; break; }   /* truncated: no IEND */
-        s = qpng_decoder_push(d, buf, k);
+        s = qpng_decoder_push(d, buf.p, k);
     }
-    qpng__free(opts ? opts->allocator : nullptr, buf);
     if (s == QPNG_OK) s = qpng_decoder_finish(d, img);
-    qpng_decoder_free(d);
     return s;
 }
 
@@ -334,6 +340,8 @@ static qpng_status e_sink(void *ctx, const uint8_t *p, size_t n) {
     return QPNG_OK;
 }
 
+static void encoder_freep(qpng_encoder **ep) { qpng_encoder_free(*ep); *ep = nullptr; }
+
 qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth, const qpng_encode_options *opts,
                          qpng_write_fn write, void *wu, qpng_encoder **out) {
     if (!out) return QPNG_ERR_ARGUMENT;
@@ -379,7 +387,7 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
     if (!qpng__zcfg_valid(&zc)) return QPNG_ERR_ARGUMENT;
 
     const qpng_allocator *A = opts->allocator;
-    qpng_encoder *e = qpng__alloc(A, sizeof *e);
+    QPNG_CLEANUP(encoder_freep) qpng_encoder *e = qpng__alloc(A, sizeof *e);
     if (!e) return QPNG_ERR_NOMEM;
     *e = (qpng_encoder){};
     if (A) { e->a = *A; e->A = &e->a; }
@@ -400,25 +408,25 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
     }
     if (!s) { memset(e->rows, 0, n); memset(e->filt, 0, 1); e->z = qpng__zstream_new(&zc, e->A, e_sink, e, &s); }
     /* signature, IHDR, metadata (before PLTE), PLTE, tRNS, metadata (before IDAT) */
-    uint8_t *m0 = nullptr, *m1 = nullptr; size_t n0 = 0, n1 = 0;
+    qpng_owned m0 = { .A = e->A }, m1 = { .A = e->A };
+    size_t n0 = 0, n1 = 0;
     if (!s && opts->metadata) {
-        s = qpng__meta_serialize(opts->metadata, 0, e->A, &m0, &n0);
-        if (!s) s = qpng__meta_serialize(opts->metadata, 1, e->A, &m1, &n1);
+        s = qpng__meta_serialize(opts->metadata, 0, e->A, (uint8_t **)&m0.p, &n0);
+        if (!s) s = qpng__meta_serialize(opts->metadata, 1, e->A, (uint8_t **)&m1.p, &n1);
         if (!s) s = qpng__meta_serialize(opts->metadata, 2, e->A, &e->tail, &e->ntail);
     }
     if (!s) {
-        uint8_t ihdr[13];
-        wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color; ihdr[10] = ihdr[11] = ihdr[12] = 0;
+        uint8_t ihdr[13] = {};
+        wbe32(ihdr, w); wbe32(ihdr + 4, h); ihdr[8] = (uint8_t)depth; ihdr[9] = (uint8_t)color;
         s = e_out(e, QPNG_PNG_SIG, 8);
         if (!s) s = e_chunk(e, "IHDR", ihdr, 13);
-        if (!s) s = e_out(e, m0, n0);
+        if (!s) s = e_out(e, m0.p, n0);
         if (!s && opts->palette) s = e_chunk(e, "PLTE", opts->palette, 3u * (size_t)opts->palette_entries);
         if (!s && opts->trns) s = e_chunk(e, "tRNS", opts->trns, (size_t)opts->trns_bytes);
-        if (!s) s = e_out(e, m1, n1);
+        if (!s) s = e_out(e, m1.p, n1);
     }
-    qpng__free(e->A, m0); qpng__free(e->A, m1);
-    if (s) { qpng_encoder_free(e); return s; }
-    *out = e;
+    if (s) return s;
+    *out = QPNG_TAKE(e);
     return QPNG_OK;
 }
 
