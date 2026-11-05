@@ -234,7 +234,7 @@ typedef enum {
 
 typedef struct {
     qpng_preset preset;          /* default QPNG_PRESET_DEFAULT */
-    int filter;                /* qpng_filter, default QPNG_FILTER_AUTO */
+    int filter;                /* qpng_filter, QPNG_FILTER_AUTO..QPNG_FILTER_ADAPTIVE (default AUTO); below AUTO -> QPNG_ERR_ARGUMENT */
     int deflate_level;         /* 0 = preset decides; 1..12 = libdeflate level; QPNG_DEFLATE_* below */
     const uint8_t *palette;    /* PLTE: palette_entries * 3 bytes (required for QPNG_COLOR_PALETTE) */
     int palette_entries;
