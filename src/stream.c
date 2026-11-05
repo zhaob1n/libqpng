@@ -146,17 +146,12 @@ static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
     return QPNG_OK;
 }
 
-/* CMF/FLG: method=deflate, window <=32KiB, no dict, FCHECK. Same check as decode.c (module A: share). */
-static int zlib_hdr_ok(const uint8_t z[static 2]) {
-    return (z[0] & 15) == 8 && (z[0] >> 4) <= 7 && !(z[1] & 32) && ((z[0] << 8 | z[1]) % 31) == 0;
-}
-
 /* STREAM mode: IDAT payload bytes */
 [[nodiscard]] static qpng_status d_idat(qpng_decoder *d, const uint8_t *p, size_t n) {
     while (n) {
         if (d->zhdr < 2) {
             d->zh[d->zhdr++] = *p++; n--;
-            if (d->zhdr == 2 && !zlib_hdr_ok(d->zh)) return QPNG_ERR_ZLIB;
+            if (d->zhdr == 2 && !qpng__zlib_hdr_ok(d->zh)) return QPNG_ERR_ZLIB;
             continue;
         }
         if (d->zend) {   /* Adler-32 trailer (and anything after it, ignored as in qpng_decode) */

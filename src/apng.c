@@ -210,7 +210,7 @@ qpng_status qpng_apng_raw_frame(qpng_apng *a, uint32_t idx, const qpng_decode_op
 
 void qpng_apng_rewind(qpng_apng *a) { if (a) { a->next = 0; a->have_prev = 0; } }
 
-static uint8_t to8(const uint8_t *p, int d16) { return d16 ? (uint8_t)(((p[0] << 8 | p[1]) + 128) / 257) : p[0]; }
+static uint8_t to8(const uint8_t *p, int d16) { return d16 ? (uint8_t)((be16(p) + 128) / 257) : p[0]; }
 
 /* the frame's rectangle of an RGBA8 canvas with `stride` bytes per row */
 static void copy_rect(uint8_t *dst, const uint8_t *src, size_t stride, const qpng_frame_info *f) {
@@ -357,8 +357,7 @@ qpng_status qpng_encode_apng(uint32_t W, uint32_t H, qpng_color color, int depth
         uint8_t fc[26];
         wbe32(fc, seq++);
         wbe32(fc + 4, f->width); wbe32(fc + 8, f->height); wbe32(fc + 12, f->x_offset); wbe32(fc + 16, f->y_offset);
-        fc[20] = (uint8_t)(f->delay_num >> 8); fc[21] = (uint8_t)f->delay_num;
-        fc[22] = (uint8_t)(f->delay_den >> 8); fc[23] = (uint8_t)f->delay_den;
+        wbe16(fc + 20, f->delay_num); wbe16(fc + 22, f->delay_den);
         fc[24] = f->dispose_op; fc[25] = f->blend_op;
         qpng__wb_chunk(&o, "fcTL", fc, sizeof fc);
         qpng_status s = put_frame(&o, fr[i].pixels, fr[i].stride, f->width, f->height, color, depth, &eo,

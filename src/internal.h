@@ -33,6 +33,11 @@ static inline void st32(void *p, uint32_t v) { memcpy(p, &v, 4); }
 static inline uint64_t ld64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
 static inline void st64(void *p, uint64_t v) { memcpy(p, &v, 8); }
 
+/* zlib CMF/FLG: deflate, window <= 32 KiB, no preset dictionary, FCHECK */
+static inline bool qpng__zlib_hdr_ok(const uint8_t z[static 2]) {
+    return (z[0] & 15) == 8 && z[0] >> 4 <= 7 && !(z[1] & 32) && be16(z) % 31 == 0;
+}
+
 /* Overflow-checked size math (<stdckdint.h>). ckd_* return true on overflow. */
 [[nodiscard]] static inline bool qpng__mul_size(size_t *out, size_t a, size_t b) { return ckd_mul(out, a, b); }
 [[nodiscard]] static inline bool qpng__add_size(size_t *out, size_t a, size_t b) { return ckd_add(out, a, b); }

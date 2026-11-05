@@ -222,7 +222,7 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
         }
         if (zbuf.p) z = zbuf.p;
     }
-    if ((z[0] & 15) != 8 || (z[0] >> 4) > 7 || (z[1] & 32) || ((z[0] << 8 | z[1]) % 31)) return QPNG_ERR_ZLIB;
+    if (!qpng__zlib_hdr_ok(z)) return QPNG_ERR_ZLIB;
 
     size_t raw_span, out_cap;
     if (qpng__add_size(&raw_span, off, rawn) || qpng__add_size(&out_cap, raw_span, 64)) return QPNG_ERR_LIMITS;
