@@ -20,8 +20,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QPNGBENCH = os.environ.get("QPNGBENCH", os.path.join(ROOT, "build", "qpngbench"))
 RSREF = os.environ.get("RSREF", os.path.join(ROOT, "tools/rsref/target/release/rsref"))
 RSREF_Z = os.environ.get("RSREF_ZLIBRS", os.path.join(ROOT, "tools/rsref/target-zlibrs/release/rsref"))
-CORPUS = os.environ.get("QPNG_CORPUS", "/workspace/image-bench/png-next/images/formats")
-RAWDIR = os.environ.get("QPNG_RAW", "/workspace/deflate-bench/data")
+CORPUS = os.environ.get("QPNG_CORPUS", os.path.join(ROOT, "bench", "corpus", "formats"))
+RAWDIR = os.environ.get("QPNG_RAW", os.path.join(ROOT, "bench", "corpus", "deflate", "data"))
 
 # label -> argv prefix (files appended).  {R} = reps.
 ENCODE = {
@@ -64,7 +64,7 @@ DEFLATE = {
 }
 
 # optional (only via --configs): previous prototype, to check the cleaned-up decoder for regressions
-V3 = os.environ.get("PNGNEXT3", "/workspace/image-bench/png-next/bin/pngnext3")
+V3 = os.environ.get("PNGNEXT3", "")
 EXTRA_DECODE = {"v3-imagers": [V3, "v3", "decode-qpng3", str(3 << 20), "{R}"]}
 
 INFLATE = {
@@ -73,7 +73,7 @@ INFLATE = {
     "qpng-pairs":        [QPNGBENCH, "inflate", "pairs", "{R}"],
     "zlib-ng":         [QPNGBENCH, "inflate", "zng", "{R}"],
 }
-STREAMS = os.environ.get("QPNG_STREAMS", "/workspace/deflate-bench/streams/png")
+STREAMS = os.environ.get("QPNG_STREAMS", os.path.join(ROOT, "bench", "corpus", "deflate", "streams"))
 
 FMT_GROUPS = [("rgb8", r"\.rgb8t?\."), ("rgba8", r"\.rgba8\."), ("ga8", r"\.ga8\."),
               ("g8", r"\.g8t?\."), ("p8", r"\.p8t?\."), ("sub8", r"\.(g|p)[124]\."),
@@ -126,6 +126,12 @@ def main():
     cfgs = [c for c in (a.configs.split(",") if a.configs else table if a.mode != "decode" else DECODE)]
     # ad-hoc qpngbench configs: "qpng=PARAM" (e.g. qpng=fast:5:9/4096/258)
     table = {**table, **{c: [QPNGBENCH, a.mode, c[5:], "{R}"] for c in cfgs if c.startswith("qpng=")}}
+    if a.mode in ("deflate", "inflate"):
+        need = STREAMS if a.mode == "inflate" else os.path.join(RAWDIR, "png")
+        if not os.path.isdir(need):
+            sys.exit(f"{need} not found; set QPNG_RAW / QPNG_STREAMS, or skip this mode")
+    elif not os.path.isdir(CORPUS):
+        sys.exit(f"corpus not found: {CORPUS}\nGenerate it with: python3 bench/gen_corpus.py")
     if a.mode == "inflate":
         files = sorted(f"{RAWDIR}/png/{f.split('.idat.')[0]}.idat:{STREAMS}/{f}" for f in os.listdir(STREAMS)
                        if f.endswith(".zlib"))
@@ -134,7 +140,7 @@ def main():
                        [f"{RAWDIR}/png-screen/{f}" for f in os.listdir(f"{RAWDIR}/png-screen") if f.endswith(".filt")])
     else:
         files = sorted(os.path.join(CORPUS, f) for f in os.listdir(CORPUS) if f.endswith(".png")
-                       and (a.interlaced or a.mode == "decode" and a.interlaced or ".i." not in f))
+                       and (a.interlaced or ".i." not in f))
     if a.files:
         files = [f for f in files if re.search(a.files, f)]
     files = [f for f in files if group_of(f, a.mode)]

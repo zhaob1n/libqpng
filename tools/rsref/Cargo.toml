@@ -6,14 +6,18 @@ publish = false
 description = "Rust-side reference + benchmark tool for qpng: png crate (git), image-rs, fdeflate"
 
 [dependencies]
-png = { path = "/workspace/image-bench/src/image-png" }
-image = { path = "/workspace/image-bench/src/image", default-features = false, features = ["png"] }
-fdeflate = { path = "/workspace/deflate-bench/src/fdeflate" }
+png = { git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
+image = { git = "https://github.com/image-rs/image", rev = "075e65d618a323e5cb48c1d8710a2eca25d690c6", default-features = false, features = ["png"] }
+fdeflate = { git = "https://github.com/image-rs/fdeflate", rev = "a713d02c560526c82e2b97519ed6720bdbc8a47a" }
 flate2 = { version = "1", default-features = false, optional = true }
 
 [features]
 # build with --features zlibrs to switch the png crate's flate2 backend (Balanced/High) to zlib-rs
 zlibrs = ["dep:flate2", "flate2/zlib-rs"]
+
+# Make image-rs use the same png crate revision as rsref itself.
+[patch.crates-io]
+png = { git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
 
 [profile.release]
 codegen-units = 16

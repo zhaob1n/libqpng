@@ -20,7 +20,7 @@ def sr(cell):
 
 Dd, E = table(D + "decode.md"), table(D + "encode.md")
 SC = [("photo/rgb8", "Photo\nRGB8"), ("graphics/rgba8", "Screenshot/UI\nRGBA8"), ("photo/g8", "Photo\ngray 8"),
-      ("graphics/p8", "Screenshot\npalette 8"), ("photo/16bit", "Photo\n16-bit"), ("ALL", "All 160\nfiles")]
+      ("graphics/p8", "Screenshot\npalette 8"), ("photo/16bit", "Photo\n16-bit"), ("ALL", "All\nfiles")]
 QC, PC, ZC, IC = "#1f5fbf", "#e07b39", "#b8860b", "#9a9a9a"
 LEV = [("Fastest", "png-fastest", None, "qpng-fastest", "FASTEST"), ("Fast", "png-fast", None, "qpng-fast", "FAST"),
        ("Balanced", "png-balanced", "pngz-balanced", "qpng-default", "DEFAULT"),

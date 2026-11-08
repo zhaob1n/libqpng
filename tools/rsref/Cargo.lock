@@ -40,9 +40,9 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "crc32fast"
-version = "1.5.2"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
 dependencies = [
  "cfg-if",
 ]
@@ -59,15 +59,16 @@ dependencies = [
 [[package]]
 name = "fdeflate"
 version = "0.4.0"
+source = "git+https://github.com/image-rs/fdeflate?rev=a713d02c560526c82e2b97519ed6720bdbc8a47a#a713d02c560526c82e2b97519ed6720bdbc8a47a"
 dependencies = [
  "simd-adler32",
 ]
 
 [[package]]
 name = "flate2"
-version = "1.1.10"
+version = "1.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
+checksum = "626d4928326b646e70f65ed36fc7cf9f206bdb68a0019ee7c6b4709da4e084c4"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -77,6 +78,7 @@ dependencies = [
 [[package]]
 name = "image"
 version = "0.25.9"
+source = "git+https://github.com/image-rs/image?rev=075e65d618a323e5cb48c1d8710a2eca25d690c6#075e65d618a323e5cb48c1d8710a2eca25d690c6"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
@@ -127,6 +129,7 @@ dependencies = [
 [[package]]
 name = "png"
 version = "0.18.1"
+source = "git+https://github.com/image-rs/image-png?rev=b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc#b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc"
 dependencies = [
  "bitflags",
  "crc32fast",

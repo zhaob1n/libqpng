@@ -4,3 +4,5 @@ tools/rsref/target*/
 build-prof/
 build-dev/
 build-asan-portable/
+bench/corpus/formats/
+bench/corpus/deflate/

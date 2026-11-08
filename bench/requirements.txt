@@ -1,0 +1,3 @@
+# bench/gen_corpus.py — versions that reproduce the published format corpus bit-for-bit
+Pillow==13.0.0
+numpy==2.5.4

@@ -19,7 +19,7 @@ Other architectures (or `-DQPNG_NO_SIMD`) build portable scalar kernels with ide
 
 ![qpng vs Rust png crate / image-rs, typical scenarios](bench/results/scenarios/scenarios.png)
 
-*Single core, fresh run on 2026-10-23 (`bench/run.py`, 160-file corpus, 3 rounds, box load ~1.1–1.4). Top: decode MB/s
+*Single core, fresh run on 2026-10-23 (`bench/run.py`, 120 non-interlaced files from the format corpus, 3 rounds, box load ~1.1–1.4). Top: decode MB/s
 (qpng is 1.3–2.1× image-rs; 1.45× over all files). Middle: encode MB/s (log scale) for qpng presets vs the png crate's
 matching levels (FASTEST/FAST/DEFAULT/BEST ↔ Fastest/Fast/Balanced/High, plus png with the zlib-rs backend). Bottom: output size
 relative to the png crate at that level. Over all files qpng is 1.7× (FASTEST), 1.7× (FAST), 5.9× (DEFAULT) and 3.4× (BEST)
@@ -218,19 +218,31 @@ Details: [`docs/dev/testing.md`](docs/dev/testing.md).
 
 ## Benchmarks
 
+The format corpus is generated from six source images checked in at
+`bench/corpus/src/` (Kodak kodim01/03/05, imagecompression.info `cathedral`,
+plus a synthetic screenshot and RGBA graphic). Hashes: `bench/corpus/src/SHA256SUMS`.
+
 ```sh
+# needs: pip install -r bench/requirements.txt   (Pillow 13.0.0, numpy 2.5.4)
+python3 bench/gen_corpus.py          # writes bench/corpus/formats/ (160 PNGs)
 cmake --build build -j
 (cd tools/rsref && cargo build --release && CARGO_TARGET_DIR=target-zlibrs cargo build --release --features zlibrs)
-python3 bench/run.py encode  --rounds 3 --reps 3      # qpng presets vs png crate presets
-python3 bench/run.py decode  --rounds 3 --reps 3 --interlaced   # vs image-rs / png crate
-python3 bench/run.py deflate --rounds 3 --reps 5      # raw zlib streams vs fdeflate
+python3 bench/run.py encode --rounds 3 --reps 2 --cpu 3 \
+  --configs png-fastest,png-fast,png-balanced,pngz-balanced,png-high,pngz-high,qpng-fastest,qpng-fast,qpng-default,qpng-best
+python3 bench/run.py decode --rounds 3 --reps 3 --cpu 3 \
+  --configs imagers,png-raw,qpng-imagers,qpng-raw
+# optional, needs extra filtered-IDAT inputs in bench/corpus/deflate/ (or set QPNG_RAW / QPNG_STREAMS):
+python3 bench/run.py deflate --rounds 3 --reps 5
 ```
 
 `run.py` refuses to start when the 1-minute load average exceeds `--max-load`, pins to one core
 (`--cpu`, default 3), rotates configuration order per round and reports per-file medians aggregated per group
-(MB/s of decoded image bytes; ratio = raw / encoded). Corpus: `QPNG_CORPUS` (default the png-next format
-corpus: kodim01/03/05, cathedral, screenshot, graphics in 20 color type / depth variants each, plus Adam7
-copies). Results of the last run are in `bench/results/`.
+(MB/s of decoded image bytes; ratio = raw / encoded). Default corpus: `bench/corpus/formats`
+(override with `QPNG_CORPUS`): kodim01/03/05, cathedral, screenshot and graphics, each in 20 color
+type / depth variants, plus Adam7 copies of kodim03 and screenshot. Encode/decode numbers in this
+README skip the interlaced copies (120 files). `tools/rsref` pins the png crate
+(`b2f10c6`), image-rs (`075e65d6`) and fdeflate (`a713d02`) by git revision. Results of the last
+run are in `bench/results/`.
 
 ## Results (2026-10-10, CST, Intel AVX-512 box shared with other agents, load 0.7-1.5, core 3, medians)
 
