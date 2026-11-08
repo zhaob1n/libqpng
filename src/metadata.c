@@ -286,6 +286,7 @@ static void wb_text(qpng__wbuf *w, const qpng_text *t) {
 
 qpng_status qpng__meta_validate(const qpng_metadata *m, int color) {
     static const uint8_t bk[7] = { 2, 0, 6, 1, 2, 0, 6 }, sb[7] = { 1, 0, 3, 3, 2, 0, 4 };
+    if ((unsigned)color > 6) return QPNG_ERR_ARGUMENT;
     if (m->has_srgb && m->srgb_intent > 3) return QPNG_ERR_ARGUMENT;
     if (m->has_phys && m->phys_unit > 1) return QPNG_ERR_ARGUMENT;
     if (m->has_bkgd && m->bkgd_size != bk[color]) return QPNG_ERR_ARGUMENT;

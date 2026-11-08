@@ -230,9 +230,11 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
         qpng_content cc = { best, alpha, depth, bpp, 0 };
         const qpng_zcfg qpng = (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = QPNG_DEFLATE_QPNG };
         if (!sz) return st != QPNG_OK ? st : QPNG_ERR_ENCODE;
-        qpng_owned tmp_ = { A, best || zng || !graphics ? qpng__alloc(A, zcap) : nullptr };
+        /* second stream / palette-Paeth trial write here; graphics always compresses into z */
+        const bool need_tmp = !graphics && (best || zng || depth == 16 || (color == QPNG_COLOR_PALETTE && depth == 8));
+        qpng_owned tmp_ = { A, need_tmp ? qpng__alloc(A, zcap) : nullptr };
         uint8_t *const tmp = tmp_.p;
-        if (!tmp && (best || zng || !graphics)) return QPNG_ERR_NOMEM;
+        if (need_tmp && !tmp) return QPNG_ERR_NOMEM;
         zn = 1;   /* "no error so far" until a stream exists */
         /* 2. filter choice. Graphics without alpha: filter None often wins (sample decides); alpha graphics:
          *    adaptive always won in the corpus. Photos: png-fast stream with adaptive filtering; 8-bit palette

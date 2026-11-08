@@ -60,6 +60,7 @@ static qpng_status build_head(qpng_apng *a) {
 static qpng_status parse(qpng_apng *a) {
     const uint8_t *b = a->png, *end = b + a->size, *p = b + 33;
     const qpng_info *in = &a->info.image;
+    if (a->o.verify_crc && libdeflate_crc32(0, b + 12, 17) != be32(b + 29)) return QPNG_ERR_CRC;
     /* pass 1: acTL position (must precede the first IDAT to count) */
     int actl = 0; uint32_t nf = 0, plays = 0;
     for (const uint8_t *q = p; q + 12 <= end; ) {
@@ -82,7 +83,7 @@ static qpng_status parse(qpng_apng *a) {
         const uint32_t len = be32(p);
         if (len > (size_t)(end - p) - 12) return QPNG_ERR_CHUNK;
         const uint8_t *t = p + 4, *d = p + 8;
-        if (a->o.verify_crc && libdeflate_crc32(0, t, len + 4) != be32(d + len) && (!memcmp(t, "fcTL", 4) || !memcmp(t, "fdAT", 4) || !memcmp(t, "acTL", 4)))
+        if (a->o.verify_crc && libdeflate_crc32(0, t, len + 4) != be32(d + len))
             return QPNG_ERR_CRC;
         p += 12 + len;
         if (!memcmp(t, "IEND", 4)) break;
@@ -154,6 +155,11 @@ qpng_status qpng_apng_open(const void *png, size_t n, const qpng_decode_options 
     qpng_info info;
     qpng_status s = qpng_read_info(png, n, &info);
     if (s) return s;
+    {
+        const uint32_t mw = opts->max_width ? opts->max_width : 1u << 24;
+        const uint32_t mh = opts->max_height ? opts->max_height : 1u << 24;
+        if (info.width > mw || info.height > mh) return QPNG_ERR_LIMITS;
+    }
     QPNG_CLEANUP(apng_release) qpng_apng *a = qpng__alloc(opts->allocator, sizeof *a);
     if (!a) return QPNG_ERR_NOMEM;
     *a = (qpng_apng){ .o = *opts, .png = png, .size = n, .info.image = info };
@@ -240,7 +246,11 @@ qpng_status qpng_apng_next_frame(qpng_apng *a, const uint8_t **canvas, qpng_fram
     if (f.dispose_op == QPNG_DISPOSE_PREVIOUS)   /* keep the region as it is before this frame */
         copy_rect(a->saved, a->canvas, cs, &f);
     const int ch = im.channels, d16 = im.bit_depth == 16, bp = ch << d16;
-    for (uint32_t y = 0; y < f.height; y++) {
+    if (ch == 4 && !d16 && f.blend_op == QPNG_BLEND_SOURCE) {
+        for (uint32_t y = 0; y < f.height; y++)
+            memcpy(a->canvas + (size_t)(f.y_offset + y) * cs + (size_t)f.x_offset * 4,
+                   im.pixels + (size_t)y * im.stride, (size_t)f.width * 4);
+    } else for (uint32_t y = 0; y < f.height; y++) {
         const uint8_t *src = im.pixels + (size_t)y * im.stride;
         uint8_t *dst = a->canvas + (size_t)(f.y_offset + y) * cs + (size_t)f.x_offset * 4;
         for (uint32_t x = 0; x < f.width; x++, src += bp, dst += 4) {
@@ -307,6 +317,10 @@ qpng_status qpng_encode_apng(uint32_t W, uint32_t H, qpng_color color, int depth
     *out = nullptr; *outn = 0;
     qpng_encode_options defo;
     if (!opts) { qpng_encode_options_init(&defo); opts = &defo; }
+    {
+        const int ch = qpng__check_encode_opts(opts, W, H, color, depth);
+        if (ch < 0) return ch;
+    }
     if (!fr || !nf || nf > 0x7FFFFFFFu || plays > 0x7FFFFFFFu || !W || !H) return QPNG_ERR_ARGUMENT;
     for (uint32_t i = 0; i < nf; i++) {
         const qpng_frame_info *f = &fr[i].info;
@@ -317,10 +331,6 @@ qpng_status qpng_encode_apng(uint32_t W, uint32_t H, qpng_color color, int depth
     if (!defimg && (fr[0].info.width != W || fr[0].info.height != H || fr[0].info.x_offset || fr[0].info.y_offset))
         return QPNG_ERR_ARGUMENT;
     const qpng_metadata *meta = opts->metadata;
-    if (meta) {
-        qpng_status s = qpng__meta_validate(meta, (int)color);
-        if (s) return s;
-    }
     qpng_encode_options eo = *opts;   /* per-frame qpng_encode: payload only, metadata is written here */
     eo.metadata = nullptr;
     QPNG_CLEANUP(qpng__wb_release) qpng__wbuf o = { .A = opts->allocator };

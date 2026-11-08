@@ -166,10 +166,88 @@ static void stills(int argc, char **argv) {
     }
 }
 
+static uint8_t *chunk_crc(uint8_t *b, size_t n, const char *type) {
+    for (size_t i = 8; i + 12 <= n; ) {
+        size_t L = (size_t)b[i] << 24 | (size_t)b[i + 1] << 16 | (size_t)b[i + 2] << 8 | b[i + 3];
+        if (L > n - i - 12) break;
+        if (!memcmp(b + i + 4, type, 4)) return b + i + 8 + L;
+        if (!memcmp(b + i + 4, "IEND", 4)) break;
+        i += 12 + L;
+    }
+    return nullptr;
+}
+
+static void expect_crc(uint8_t *png, size_t n, const char *type) {
+    uint8_t *crc = chunk_crc(png, n, type);
+    CHECK(crc != nullptr);
+    if (!crc) return;
+    qpng_tool_autofree uint8_t *copy = malloc(n);
+    CHECK(copy != nullptr);
+    if (!copy) return;
+    memcpy(copy, png, n);
+    copy[crc - png] ^= 0xff;
+    qpng_apng *a = nullptr;
+    CHECK(qpng_apng_open(copy, n, nullptr, &a) == QPNG_ERR_CRC);
+    qpng_decode_options o;
+    qpng_decode_options_init(&o);
+    o.verify_crc = 0;
+    CHECK(qpng_apng_open(copy, n, &o, &a) == QPNG_OK);
+    if (a) qpng_apng_free(a);
+}
+
+static void crc_limits_and_args(void) {
+    enum { W = 8, H = 8 };
+    uint8_t px[W * H * 4], px2[W * H * 4];
+    memset(px, 80, sizeof px);
+    memset(px2, 160, sizeof px2);
+    for (size_t i = 3; i < sizeof px; i += 4) { px[i] = 255; px2[i] = 255; }
+    qpng_apng_frame fr[2] = {
+        { .pixels = px, .stride = (size_t)W * 4,
+          .info = { .width = W, .height = H, .delay_num = 1, .delay_den = 10 } },
+        { .pixels = px2, .stride = (size_t)W * 4,
+          .info = { .width = W, .height = H, .delay_num = 1, .delay_den = 10 } },
+    };
+    uint8_t *png = nullptr; size_t n = 0;
+    CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, 2, 0, nullptr, 0, nullptr, &png, &n) == QPNG_OK);
+    static const char *types[] = { "IHDR", "IDAT", "fdAT", "acTL", "fcTL" };
+    for (size_t i = 0; i < sizeof types / sizeof *types; i++) expect_crc(png, n, types[i]);
+
+    uint8_t idx[W * H] = { 0 };
+    uint8_t pal[6] = { 0, 255, 0, 255, 0, 0 }, tr = 0;
+    qpng_encode_options eo;
+    qpng_encode_options_init(&eo);
+    eo.palette = pal; eo.palette_entries = 2; eo.trns = &tr; eo.trns_bytes = 1;
+    qpng_apng_frame frp = { .pixels = idx, .stride = W,
+        .info = { .width = W, .height = H, .delay_num = 1, .delay_den = 10 } };
+    uint8_t *ppng = nullptr; size_t pn = 0;
+    CHECK(qpng_encode_apng(W, H, QPNG_COLOR_PALETTE, 8, &frp, 1, 0, nullptr, 0, &eo, &ppng, &pn) == QPNG_OK);
+    expect_crc(ppng, pn, "PLTE");
+    expect_crc(ppng, pn, "tRNS");
+    qpng_buffer_free(ppng, nullptr);
+
+    qpng_metadata meta = { .has_bkgd = 1, .bkgd_size = 6 };
+    qpng_encode_options bad;
+    qpng_encode_options_init(&bad);
+    bad.metadata = &meta;
+    uint8_t *out = nullptr; size_t on = 0;
+    CHECK(qpng_encode_apng(W, H, (qpng_color)7, 8, fr, 2, 0, nullptr, 0, &bad, &out, &on) == QPNG_ERR_ARGUMENT);
+    CHECK(qpng_encode_apng(W, H, (qpng_color)-1, 8, fr, 2, 0, nullptr, 0, &bad, &out, &on) == QPNG_ERR_ARGUMENT);
+    CHECK(qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, 2, 0, nullptr, 0, &bad, &out, &on) == QPNG_OK);
+    qpng_buffer_free(out, nullptr);
+
+    qpng_decode_options o;
+    qpng_decode_options_init(&o);
+    o.max_width = 4;
+    qpng_apng *a = nullptr;
+    CHECK(qpng_apng_open(png, n, &o, &a) == QPNG_ERR_LIMITS);
+    qpng_buffer_free(png, nullptr);
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) return 2;
     suite(argv[1]);
     roundtrip();
+    crc_limits_and_args();
     stills(argc, argv);
     printf("apng: %d failures\n", fails);
     return fails != 0;
