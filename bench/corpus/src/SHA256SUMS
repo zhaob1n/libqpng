@@ -1,7 +1,10 @@
 # Sources for bench/gen_corpus.py (sha256sum -c SHA256SUMS).
-# kodim01/03/05: Kodak True Color suite, 768x512.
-# cathedral: imagecompression.info RGB 8-bit test set, 2000x3008.
-# screenshot: synthetic UI, 1280x800 RGB; graphics: synthetic RGBA, 800x600.
+# These files are not covered by the library MIT license (see README License).
+# kodim01/03/05: Kodak True Color suite, 768x512 (copyright Eastman Kodak Company).
+# cathedral: imagecompression.info RGB 8-bit test set, 2000x3008;
+#   https://imagecompression.info/test_images/
+# screenshot: synthetic UI created for this project, 1280x800 RGB.
+# graphics: synthetic RGBA created for this project, 800x600.
 3688a9486db3b06c794ca533b0ea35df857612d302eddd15fd735a7af6644685  kodim01.png
 049b763eafb039dfbcf0b9fdee8723c589b44e45d5d502919918e4b338369fb3  kodim03.png
 f169006489d5631094ffb056172c1443a439fe42fbbfbd1adc3964fcac944b87  kodim05.png

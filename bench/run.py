@@ -24,6 +24,11 @@ CORPUS = os.environ.get("QPNG_CORPUS", os.path.join(ROOT, "bench", "corpus", "fo
 RAWDIR = os.environ.get("QPNG_RAW", os.path.join(ROOT, "bench", "corpus", "deflate", "data"))
 
 # label -> argv prefix (files appended).  {R} = reps.
+# Default encode (no --configs) is the 10 published README presets.
+ENCODE_DEFAULT = (
+    "png-fastest", "png-fast", "png-balanced", "pngz-balanced",
+    "png-high", "pngz-high", "qpng-fastest", "qpng-fast", "qpng-default", "qpng-best",
+)
 ENCODE = {
     "png-fastest":      [RSREF, "bench-encode", "fastest", "{R}"],
     "png-fast":         [RSREF, "bench-encode", "fast", "{R}"],
@@ -109,7 +114,9 @@ def main():
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--cpu", type=int, default=3)
-    ap.add_argument("--configs", default="")
+    ap.add_argument("--configs", default="",
+                    help="comma-separated names; encode default is the 10 published presets "
+                         "(exploration and #ld/#zng remain available here)")
     ap.add_argument("--files", default="", help="regex filter on file names")
     ap.add_argument("--interlaced", action="store_true", help="decode: include .i.png")
     ap.add_argument("--max-load", type=float, default=2.5)
@@ -123,7 +130,14 @@ def main():
     table = {"encode": ENCODE, "decode": DECODE, "deflate": DEFLATE, "inflate": INFLATE}[a.mode]
     if a.mode == "decode":
         table = {**table, **EXTRA_DECODE}
-    cfgs = [c for c in (a.configs.split(",") if a.configs else table if a.mode != "decode" else DECODE)]
+    if a.configs:
+        cfgs = [c for c in a.configs.split(",") if c]
+    elif a.mode == "encode":
+        cfgs = list(ENCODE_DEFAULT)
+    elif a.mode == "decode":
+        cfgs = list(DECODE)
+    else:
+        cfgs = list(table)
     # ad-hoc qpngbench configs: "qpng=PARAM" (e.g. qpng=fast:5:9/4096/258)
     table = {**table, **{c: [QPNGBENCH, a.mode, c[5:], "{R}"] for c in cfgs if c.startswith("qpng=")}}
     if a.mode in ("deflate", "inflate"):

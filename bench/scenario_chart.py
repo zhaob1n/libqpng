@@ -66,7 +66,7 @@ for li, (L, p, z, q, qn) in enumerate(LEV):
     a2.axhline(100, color=PC, lw=0.8, ls="--")
     for a in (a1, a2):
         a.set_xticks(x); a.set_xticklabels([s.replace("\n", " ").replace("Screenshot/UI", "UI").replace("Screenshot", "Scr.")
-                                            .replace("Photo ", "").replace("All 160 files", "ALL") for _, s in SC],
+                                            .replace("Photo ", "").replace("All files", "ALL") for _, s in SC],
                                            rotation=35, ha="right", fontsize=8)
         a.grid(axis="y", alpha=0.3)
     a1.legend(fontsize=7.5, loc="upper right", framealpha=0.9)

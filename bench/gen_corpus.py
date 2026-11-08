@@ -81,7 +81,15 @@ def to16(x, noisy):            # photos: 8-bit value * 257 plus noise in the low
     y = x.astype(np.uint32) * 257
     if noisy: y = np.clip(y.astype(np.int64) + rng.integers(-128, 128, x.shape), 0, 65535)
     return y.astype(np.uint16)
-NAMES = sys.argv[1:] or ["kodim01", "kodim03", "kodim05", "cathedral", "screenshot", "graphics"]
+DEFAULT_NAMES = ["kodim01", "kodim03", "kodim05", "cathedral", "screenshot", "graphics"]
+NAMES = sys.argv[1:] or DEFAULT_NAMES
+if sys.argv[1:] and NAMES != DEFAULT_NAMES:
+    print(
+        "warning: 16-bit photo noise uses one RNG stream (seed 7) across the whole run;\n"
+        "generating a subset will not match the published corpus.\n"
+        "Run `python3 bench/gen_corpus.py` with no arguments to reproduce it.",
+        file=sys.stderr,
+    )
 print(f"sources: {SRC}\noutput:  {O}", flush=True)
 for n in NAMES:
     im = load(n); photo = n not in ("screenshot", "graphics")

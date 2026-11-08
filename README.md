@@ -227,17 +227,23 @@ plus a synthetic screenshot and RGBA graphic). Hashes: `bench/corpus/src/SHA256S
 python3 bench/gen_corpus.py          # writes bench/corpus/formats/ (160 PNGs)
 cmake --build build -j
 (cd tools/rsref && cargo build --release && CARGO_TARGET_DIR=target-zlibrs cargo build --release --features zlibrs)
+python3 bench/run.py encode --rounds 3 --reps 2 --cpu 3
+python3 bench/run.py decode --rounds 3 --reps 3 --cpu 3
+# optional: 2026-10-10 backend-forced table (#ld = libdeflate, #zng = zlib-ng)
 python3 bench/run.py encode --rounds 3 --reps 2 --cpu 3 \
-  --configs png-fastest,png-fast,png-balanced,pngz-balanced,png-high,pngz-high,qpng-fastest,qpng-fast,qpng-default,qpng-best
-python3 bench/run.py decode --rounds 3 --reps 3 --cpu 3 \
-  --configs imagers,png-raw,qpng-imagers,qpng-raw
+  --configs qpng-default-ld,qpng-default-zng,qpng-best-ld,qpng-best-zng,qpng-fastest-zng,qpng-fast-zng
 # optional, needs extra filtered-IDAT inputs in bench/corpus/deflate/ (or set QPNG_RAW / QPNG_STREAMS):
 python3 bench/run.py deflate --rounds 3 --reps 5
 ```
 
 `run.py` refuses to start when the 1-minute load average exceeds `--max-load`, pins to one core
 (`--cpu`, default 3), rotates configuration order per round and reports per-file medians aggregated per group
-(MB/s of decoded image bytes; ratio = raw / encoded). Default corpus: `bench/corpus/formats`
+(MB/s of decoded image bytes; ratio = raw / encoded). Encode without `--configs` runs the ten published
+presets (`png-fastest` / `png-fast` / `png-balanced` / `pngz-balanced` / `png-high` / `pngz-high` /
+`qpng-fastest` / `qpng-fast` / `qpng-default` / `qpng-best`). The `#ld` / `#zng` backend-forced names
+and exploration presets (`qpng-lN`, `qpng-uN`, `qpng-nN`, …) stay available via `--configs`.
+`qpng-fastest-ld` and `qpng-fast-ld` exist too; they match AUTO for those presets (same path as libdeflate)
+and are omitted from the published backend table. Default corpus: `bench/corpus/formats`
 (override with `QPNG_CORPUS`): kodim01/03/05, cathedral, screenshot and graphics, each in 20 color
 type / depth variants, plus Adam7 copies of kodim03 and screenshot. Encode/decode numbers in this
 README skip the interlaced copies (120 files). `tools/rsref` pins the png crate
@@ -376,3 +382,8 @@ Inflate (MB/s) incl. zlib-ng: libdeflate stays the decoder (patched pair decodin
 ## License
 
 MIT; see `LICENSE`. Bundled third-party code keeps its own license: `third_party/libdeflate` (MIT) and `third_party/zlib-ng` (zlib license).
+
+The images in `bench/corpus/src/` are not covered by that MIT license:
+- `kodim01.png`, `kodim03.png`, `kodim05.png`: Kodak True Color suite (copyright Eastman Kodak Company), included as widely used research/test images.
+- `cathedral.png`: from the [imagecompression.info](https://imagecompression.info/test_images/) RGB 8-bit test set; please credit that source.
+- `screenshot.png` and `graphics.png`: synthetic images created for this project.
