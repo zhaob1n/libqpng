@@ -204,10 +204,10 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     memcpy(p, QPNG__SIG, sizeof QPNG__SIG); p += sizeof QPNG__SIG;
     uint8_t ihdr[13];
     qpng__put_ihdr(ihdr, w, h, depth, (int)color);
-    p = qpng__put_chunk(p, "IHDR", ihdr, 13);
+    p = qpng__put_chunk(13, p, "IHDR", ihdr, false);
     if (mn[0]) { memcpy(p, m.b[0], mn[0]); p += mn[0]; }
-    if (opts->palette) p = qpng__put_chunk(p, "PLTE", opts->palette, 3u * (uint32_t)opts->palette_entries);
-    if (opts->trns) p = qpng__put_chunk(p, "tRNS", opts->trns, (uint32_t)opts->trns_bytes);
+    if (opts->palette) p = qpng__put_chunk(3u * (uint32_t)opts->palette_entries, p, "PLTE", opts->palette, false);
+    if (opts->trns) p = qpng__put_chunk((uint32_t)opts->trns_bytes, p, "tRNS", opts->trns, false);
     if (mn[1]) { memcpy(p, m.b[1], mn[1]); p += mn[1]; }
     /* single IDAT (bound < 1 GiB): compress in place behind the IDAT header. Otherwise compress to the end of the
      * buffer and lay the chunks out in front of the data. */
@@ -284,11 +284,11 @@ qpng_status qpng_encode(const void *pixels, uint32_t w, uint32_t h, size_t strid
     for (size_t done = 0; done < zn;) {
         uint32_t len = (uint32_t)((zn - done) < 0x40000000u ? zn - done : 0x40000000u);
         if (p + 8 != z + done) memmove(p + 8, z + done, len);   /* p + 8 <= z + done always holds: chunks only add 12-byte overhead */
-        p = qpng__put_chunk(p, "IDAT", nullptr, len);
+        p = qpng__put_chunk(len, p, "IDAT", nullptr, false);
         done += len;
     }
     if (mn[2]) { memcpy(p, m.b[2], mn[2]); p += mn[2]; }
-    p = qpng__put_chunk(p, "IEND", nullptr, 0);
+    p = qpng__put_chunk(0, p, "IEND", nullptr, false);
     *outn = (size_t)(p - out);
     *outp = qpng__realloc_shrink(A, qpng__take(&out_), cap, *outn);
     return QPNG_OK;

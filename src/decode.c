@@ -128,10 +128,6 @@ qpng_status qpng_read_info(const void *png, size_t n, qpng_info *info) {
     return QPNG_OK;
 }
 
-static inline void qpng__free_decompressorp(struct libdeflate_decompressor **dp) {
-    if (*dp) libdeflate_free_decompressor(*dp);
-}
-
 /* Adam7: unfilter each pass row into a 2-row ping-pong buffer (rb), transform to output pixels, scatter into ob.
  * Kept out of qpng_decode: the short pass rows make per-row overhead visible, and the caller's cleanup-owned
  * locals cost registers across the per-row calls (-5..15% on interlaced 8-bit gray / palette). */

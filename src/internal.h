@@ -90,6 +90,11 @@ void qpng__free(const qpng_allocator *a, void *p);
 [[nodiscard]] void *qpng__grow(const qpng_allocator *a, void *p, size_t n, size_t cap[static 1], size_t need, size_t el,
                                size_t first);
 
+/* libdeflate decompressor cleanup (decode.c, metadata.c); null-safe */
+static inline void qpng__free_decompressorp(struct libdeflate_decompressor **dp) {
+    if (*dp) libdeflate_free_decompressor(*dp);
+}
+
 /* ---- scope-bound release: [[gnu::cleanup]] instead of free()/goto-cleanup ----
  * Owning locals are declared with a cleanup attribute; error returns just return.
  * Hand ownership out with QPNG_TAKE / qpng__take (nulls the local so cleanup is a no-op).
@@ -117,11 +122,13 @@ static inline void qpng__owned_release(qpng__owned *o) { qpng__free(o->A, o->p);
 [[nodiscard]] static inline void *qpng__take(qpng__owned *o) { void *p = o->p; o->p = nullptr; return p; }
 
 /* ---- PNG chunk writers (common.c) ---- */
-/* Frame len bytes already at p + 8 (data == nullptr) or copied from data: length, type, CRC. Returns the chunk end. */
-static inline uint8_t *qpng__put_chunk(uint8_t *p, const char type[static 4], const uint8_t *data, uint32_t len) {
+/* Frame len bytes already at p + 8 (data == nullptr) or copied from data: length, type, CRC. Returns the chunk end.
+ * zero_crc writes 0 instead of computing it (apng frame PNGs are decoded with verify_crc off). */
+static inline uint8_t *qpng__put_chunk(uint32_t len, uint8_t *p, const char type[static 4], const uint8_t *data,
+                                       bool zero_crc) {
     wbe32(p, len); memcpy(p + 4, type, 4);
     if (data && len) memcpy(p + 8, data, len);
-    wbe32(p + 8 + len, libdeflate_crc32(0, p + 4, (size_t)len + 4));
+    wbe32(p + 8 + len, zero_crc ? 0 : libdeflate_crc32(0, p + 4, (size_t)len + 4));
     return p + 12 + len;
 }
 /* Growable output buffer (allocator A) that frames PNG chunks. The first error sticks and turns every later write

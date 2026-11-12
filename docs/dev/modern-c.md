@@ -66,8 +66,9 @@ Before adding a helper, look in `src/internal.h` / `src/common.c`:
 |---|---|
 | signature | `QPNG__SIG` |
 | IHDR parse (+ decode limits) / payload | `qpng__parse_ihdr` / `qpng__put_ihdr` |
-| chunk in a sized buffer / growable buffer | `qpng__put_chunk` / `qpng__wbuf` (`qpng__wb_*`) |
+| chunk in a sized buffer / growable buffer | `qpng__put_chunk` (length-first, `zero_crc` flag) / `qpng__wbuf` (`qpng__wb_*`) |
 | zlib CMF/FLG check | `qpng__zlib_hdr_ok` |
+| libdeflate decompressor cleanup | `qpng__free_decompressorp` |
 | big-endian fields | `be16` `be32` `wbe16` `wbe32` |
 | grow an array (allocator has no realloc) | `qpng__grow` |
 | encoder option validation | `qpng__check_encode_opts` |

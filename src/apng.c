@@ -37,12 +37,9 @@ void qpng_apng_free(qpng_apng *a) {
     qpng__free(A, a->canvas); qpng__free(A, a->saved); qpng__free(A, a);
 }
 
-/* chunk with a zero CRC: frame PNGs are decoded with verify_crc off, the real CRCs were checked in parse */
-static uint8_t *raw_chunk(uint8_t *p, const char type[static 4], const uint8_t *d, uint32_t n) {
-    wbe32(p, n); memcpy(p + 4, type, 4);
-    if (n) memcpy(p + 8, d, n);
-    wbe32(p + 8 + n, 0);
-    return p + 12 + n;
+/* frame-PNG chunk with a zero CRC: these are decoded with verify_crc off, the real CRCs were checked in parse */
+static uint8_t *raw_chunk(uint32_t n, uint8_t *p, const char type[static 4], const uint8_t *d) {
+    return qpng__put_chunk(n, p, type, d, true);
 }
 
 /* the part of every frame PNG before its IDAT; decode_frame patches the frame size into IHDR */
@@ -51,9 +48,9 @@ static qpng_status build_head(qpng_apng *a) {
     uint8_t *p = a->head = qpng__alloc(aA(a), a->headn);
     if (!p) return QPNG_ERR_NOMEM;
     memcpy(p, QPNG__SIG, sizeof QPNG__SIG);
-    p = raw_chunk(p + 8, "IHDR", a->png + 16, 13);
-    if (a->plte) p = raw_chunk(p, "PLTE", a->plte, a->plen);
-    if (a->trns) raw_chunk(p, "tRNS", a->trns, a->tlen);
+    p = raw_chunk(13, p + 8, "IHDR", a->png + 16);
+    if (a->plte) p = raw_chunk(a->plen, p, "PLTE", a->plte);
+    if (a->trns) raw_chunk(a->tlen, p, "tRNS", a->trns);
     return QPNG_OK;
 }
 
@@ -190,7 +187,7 @@ static qpng_status decode_frame(qpng_apng *a, uint32_t idx, const qpng_decode_op
     wbe32(p, (uint32_t)fr->zsize); memcpy(p + 4, "IDAT", 4); p += 8;
     for (const qpng_seg *sg = a->seg + fr->seg0, *se = sg + fr->nseg; sg < se; sg++) { memcpy(p, sg->p, sg->n); p += sg->n; }
     wbe32(p, 0);
-    p = raw_chunk(p + 4, "IEND", nullptr, 0);
+    p = raw_chunk(0, p + 4, "IEND", nullptr);
     qpng_decode_options oo = *o;
     oo.verify_crc = 0;
     return qpng_decode(b.p, (size_t)(p - (uint8_t *)b.p), &oo, img);

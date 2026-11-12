@@ -1,5 +1,6 @@
 /* metadata.c - ancillary chunks: reading (qpng_read_metadata) and serialisation for the encoder. */
 #include "metadata.h"
+#include "deflate_backend.h"
 
 /* ---- owned storage: a list of blocks allocated with the user's allocator ---- */
 typedef struct qpng_mblock { struct qpng_mblock *next; size_t size; } qpng_mblock;
@@ -38,11 +39,9 @@ void qpng_metadata_free(qpng_metadata *meta) {
     *meta = (qpng_metadata){};
 }
 
-static void free_decompressor(struct libdeflate_decompressor **d) { libdeflate_free_decompressor(*d); }
-
 /* zlib stream -> new buffer (allocator A) of at most `limit` bytes; nullptr if invalid / too large */
 [[nodiscard]] static uint8_t *inflate_limited(const uint8_t *src, size_t n, size_t limit, const qpng_allocator *A, size_t *outn) {
-    QPNG_CLEANUP(free_decompressor) struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
+    QPNG_CLEANUP(qpng__free_decompressorp) struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
     if (!d) return nullptr;
     /* libdeflate needs the output size: grow x4 up to the limit */
     for (size_t cap = n * 4 + 1024;; cap = cap > limit / 4 ? limit : cap * 4) {
@@ -246,19 +245,18 @@ static int chunk_type_ok(const char *t) {
 
 static void wb_str(qpng__wbuf *w, const char *s) { qpng__wb_put(w, s, strlen(s) + 1); }
 
-[[nodiscard]] static uint8_t *zlib9(const void *src, size_t n, size_t *zn, const qpng_allocator *A) {
-    struct libdeflate_compressor *c = libdeflate_alloc_compressor(9);
-    if (!c) return nullptr;
-    size_t cap = libdeflate_zlib_compress_bound(c, n);
+[[nodiscard]] static uint8_t *zlib9(size_t n, const void *src, size_t *zn, const qpng_allocator *A) {
+    const qpng_zcfg c = { .backend = QPNG_BACKEND_LIBDEFLATE, .level = 9 };
+    const size_t cap = qpng__zbound(n);
     qpng_owned z = { A, qpng__alloc(A, cap) };
-    *zn = z.p ? libdeflate_zlib_compress(c, src, n, z.p, cap) : 0;
-    libdeflate_free_compressor(c);
+    qpng_status st = QPNG_OK;   /* zlib9 collapses every failure to nullptr */
+    *zn = z.p ? qpng__zcompress(&c, src, n, z.p, cap, A, &st) : 0;
     return *zn ? qpng__take(&z) : nullptr;
 }
 /* append zlib(src) at level 9 and close the chunk opened at start */
 static void wb_deflated(qpng__wbuf *w, size_t start, const void *src, size_t n) {
     size_t zn = 0;
-    qpng_owned z = { w->A, zlib9(src, n, &zn, w->A) };
+    qpng_owned z = { w->A, zlib9(n, src, &zn, w->A) };
     if (!z.p) { if (!w->err) w->err = QPNG_ERR_NOMEM; return; }
     qpng__wb_put(w, z.p, zn);
     qpng__wb_end(w, start);

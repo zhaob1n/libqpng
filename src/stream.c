@@ -307,7 +307,7 @@ static qpng_status e_out(qpng_encoder *e, const uint8_t *p, size_t n) {
 }
 static qpng_status e_flush_idat(qpng_encoder *e) {
     if (!e->nidat) return QPNG_OK;
-    const uint8_t *end = qpng__put_chunk(e->idat, "IDAT", nullptr, (uint32_t)e->nidat);
+    const uint8_t *end = qpng__put_chunk((uint32_t)e->nidat, e->idat, "IDAT", nullptr, false);
     e->nidat = 0;
     return e_out(e, e->idat, (size_t)(end - e->idat));
 }
@@ -442,7 +442,7 @@ qpng_status qpng_encoder_finish(qpng_encoder *e) {
     if (!s) s = e_flush_idat(e);
     if (!s) s = e_out(e, e->tail, e->ntail);
     uint8_t iend[12];
-    if (!s) s = e_out(e, iend, (size_t)(qpng__put_chunk(iend, "IEND", nullptr, 0) - iend));
+    if (!s) s = e_out(e, iend, (size_t)(qpng__put_chunk(0, iend, "IEND", nullptr, false) - iend));
     e->finished = 1;
     return s ? (e->err = s) : QPNG_OK;
 }
