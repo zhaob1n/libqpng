@@ -95,7 +95,7 @@ static qpng_zcfg photo_cfg(const qpng_content *c, int backend, int zlevel, int z
  * (0 on error) and the sample size in *raw. The caller passes its full-image filter and output buffers (always
  * large enough), so the probe adds no allocations and pre-faults pages the final pass reuses.
  */
-static size_t sample_size(const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int filter,
+[[nodiscard]] static size_t sample_size(const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int filter,
                           uint8_t *scratch, uint8_t *zbuf, size_t zcap, size_t *raw, qpng_status *st) {
     /* long strips keep the vertical match context that Up/None rely on */
     const uint32_t strip = h >= 512 ? 32 : 16, period = h >= 512 ? 192 : h >= 256 ? 64 : strip;

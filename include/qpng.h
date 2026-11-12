@@ -34,7 +34,7 @@ extern "C" {
 #endif
 
 /* ---- status codes ------------------------------------------------------------------------------------------- */
-typedef enum {
+typedef enum [[nodiscard]] {
     QPNG_OK = 0,
     QPNG_ERR_ARGUMENT = -1,     /* invalid argument (nullptr, bad enum, inconsistent sizes) */
     QPNG_ERR_SIGNATURE = -2,    /* not a PNG */
@@ -55,7 +55,7 @@ typedef enum {
     QPNG_MORE_DATA = 1          /* streaming decode: not an error, more input is needed */
 } qpng_status;
 
-[[nodiscard]] QPNG_API const char *qpng_status_string(qpng_status status);
+QPNG_API const char *qpng_status_string(qpng_status status);
 
 /* ---- common types ----------------------------------------------------------------------------------------------- */
 typedef enum {
@@ -120,9 +120,9 @@ typedef struct {
 /* Fill *opts with the defaults. */
 QPNG_API void qpng_decode_options_init(qpng_decode_options *opts);
 /* Parse the signature + IHDR (+ PLTE/tRNS presence). Does not validate CRCs beyond IHDR. */
-[[nodiscard]] QPNG_API qpng_status qpng_read_info(const void *png, size_t png_size, qpng_info *info);
+QPNG_API qpng_status qpng_read_info(const void *png, size_t png_size, qpng_info *info);
 /* Decode a whole PNG held in memory. opts may be nullptr (defaults). On error *img is zeroed. */
-[[nodiscard]] QPNG_API qpng_status qpng_decode(const void *png, size_t png_size, const qpng_decode_options *opts, qpng_image *img);
+QPNG_API qpng_status qpng_decode(const void *png, size_t png_size, const qpng_decode_options *opts, qpng_image *img);
 QPNG_API void qpng_image_free(qpng_image *img);
 
 /* ---- metadata (ancillary chunks) ------------------------------------------------------------------------------
@@ -188,7 +188,7 @@ typedef struct {
 
 QPNG_API void qpng_metadata_options_init(qpng_metadata_options *opts);
 /* Parse all ancillary chunks (the image data is not decoded). opts may be nullptr. On error *meta is zeroed. */
-[[nodiscard]] QPNG_API qpng_status qpng_read_metadata(const void *png, size_t png_size, const qpng_metadata_options *opts, qpng_metadata *meta);
+QPNG_API qpng_status qpng_read_metadata(const void *png, size_t png_size, const qpng_metadata_options *opts, qpng_metadata *meta);
 QPNG_API void qpng_metadata_free(qpng_metadata *meta);
 
 /* ---- encoding ----------------------------------------------------------------------------------------------- */
@@ -230,7 +230,7 @@ typedef enum {
 } qpng_zstrategy;
 
 /* 1 if the backend is compiled into this library (AUTO and LIBDEFLATE: always) */
-[[nodiscard]] QPNG_API int qpng_backend_available(qpng_backend backend);
+QPNG_API int qpng_backend_available(qpng_backend backend);
 
 typedef struct {
     qpng_preset preset;          /* default QPNG_PRESET_DEFAULT */
@@ -261,7 +261,7 @@ QPNG_API void qpng_encode_options_init(qpng_encode_options *opts);
 /* Encode width x height pixels. `pixels` rows use the RAW layout above (16-bit big-endian, depth < 8 packed MSB
  * first); `stride` = bytes between rows (0 = tightly packed). The PNG is returned in *out (free with
  * qpng_buffer_free(*out, opts->allocator)). */
-[[nodiscard]] QPNG_API qpng_status qpng_encode(const void *pixels, uint32_t width, uint32_t height, size_t stride, qpng_color color,
+QPNG_API qpng_status qpng_encode(const void *pixels, uint32_t width, uint32_t height, size_t stride, qpng_color color,
                            int bit_depth, const qpng_encode_options *opts, uint8_t **out, size_t *out_size);
 QPNG_API void qpng_buffer_free(void *buf, const qpng_allocator *allocator);
 
@@ -280,19 +280,19 @@ QPNG_API void qpng_buffer_free(void *buf, const qpng_allocator *allocator);
 typedef struct qpng_decoder qpng_decoder;
 /* return nonzero to abort (the push / finish then fails with QPNG_ERR_ABORTED) */
 typedef int (*qpng_row_fn)(void *user, uint32_t y, const uint8_t *row, size_t row_bytes);
-[[nodiscard]] QPNG_API qpng_status qpng_decoder_new(const qpng_decode_options *opts, qpng_row_fn row_cb, void *user, qpng_decoder **dec);
+QPNG_API qpng_status qpng_decoder_new(const qpng_decode_options *opts, qpng_row_fn row_cb, void *user, qpng_decoder **dec);
 /* returns QPNG_OK when the stream is complete (IEND seen), QPNG_MORE_DATA when more input is expected, or an error
  * (sticky: later calls return it again) */
-[[nodiscard]] QPNG_API qpng_status qpng_decoder_push(qpng_decoder *dec, const void *data, size_t size);
+QPNG_API qpng_status qpng_decoder_push(qpng_decoder *dec, const void *data, size_t size);
 /* QPNG_OK once IHDR has been parsed (info filled), QPNG_MORE_DATA before */
-[[nodiscard]] QPNG_API qpng_status qpng_decoder_info(const qpng_decoder *dec, qpng_info *info);
+QPNG_API qpng_status qpng_decoder_info(const qpng_decoder *dec, qpng_info *info);
 /* after IEND: image mode returns the image in *img; row mode emits any rows still pending (img may be nullptr) */
-[[nodiscard]] QPNG_API qpng_status qpng_decoder_finish(qpng_decoder *dec, qpng_image *img);
+QPNG_API qpng_status qpng_decoder_finish(qpng_decoder *dec, qpng_image *img);
 QPNG_API void qpng_decoder_free(qpng_decoder *dec);
 /* convenience: pull input from read (returns bytes read, 0 = end of input, (size_t)-1 = error -> QPNG_ERR_ABORTED)
  * and decode with qpng_decoder_* (row_cb / img as above) */
 typedef size_t (*qpng_read_fn)(void *user, uint8_t *buf, size_t size);
-[[nodiscard]] QPNG_API qpng_status qpng_decode_stream(qpng_read_fn read, void *read_user, const qpng_decode_options *opts, qpng_row_fn row_cb,
+QPNG_API qpng_status qpng_decode_stream(qpng_read_fn read, void *read_user, const qpng_decode_options *opts, qpng_row_fn row_cb,
                                   void *row_user, qpng_image *img);
 
 /* Incremental encode with bounded memory: rows are pushed in order (any batch size) and the PNG is written through
@@ -303,12 +303,12 @@ typedef size_t (*qpng_read_fn)(void *user, uint8_t *buf, size_t size);
  * opts->metadata is written. Memory: a few rows + compressor state (zlib-ng ~300 KiB). */
 typedef struct qpng_encoder qpng_encoder;
 typedef int (*qpng_write_fn)(void *user, const uint8_t *data, size_t size);   /* nonzero = abort */
-[[nodiscard]] QPNG_API qpng_status qpng_encoder_new(uint32_t width, uint32_t height, qpng_color color, int bit_depth,
+QPNG_API qpng_status qpng_encoder_new(uint32_t width, uint32_t height, qpng_color color, int bit_depth,
                                 const qpng_encode_options *opts, qpng_write_fn write, void *write_user, qpng_encoder **enc);
 /* rows in qpng_encode's layout; stride 0 = packed. Pushing more than `height` rows -> QPNG_ERR_STATE. */
-[[nodiscard]] QPNG_API qpng_status qpng_encoder_push_rows(qpng_encoder *enc, const void *rows, size_t stride, uint32_t nrows);
+QPNG_API qpng_status qpng_encoder_push_rows(qpng_encoder *enc, const void *rows, size_t stride, uint32_t nrows);
 /* all rows must have been pushed; writes the remaining data and IEND */
-[[nodiscard]] QPNG_API qpng_status qpng_encoder_finish(qpng_encoder *enc);
+QPNG_API qpng_status qpng_encoder_finish(qpng_encoder *enc);
 QPNG_API void qpng_encoder_free(qpng_encoder *enc);
 
 /* ---- APNG -----------------------------------------------------------------------------------------------------
@@ -338,12 +338,12 @@ typedef struct {
     int default_image_is_frame;      /* IDAT is frame 0 */
 } qpng_apng_info;
 typedef struct qpng_apng qpng_apng;
-[[nodiscard]] QPNG_API qpng_status qpng_apng_open(const void *png, size_t size, const qpng_decode_options *opts, qpng_apng **apng);
+QPNG_API qpng_status qpng_apng_open(const void *png, size_t size, const qpng_decode_options *opts, qpng_apng **apng);
 QPNG_API void qpng_apng_get_info(const qpng_apng *apng, qpng_apng_info *info);
-[[nodiscard]] QPNG_API qpng_status qpng_apng_next_frame(qpng_apng *apng, const uint8_t **canvas_rgba8, qpng_frame_info *frame);
+QPNG_API qpng_status qpng_apng_next_frame(qpng_apng *apng, const uint8_t **canvas_rgba8, qpng_frame_info *frame);
 QPNG_API void qpng_apng_rewind(qpng_apng *apng);
 /* opts nullptr = the options given to qpng_apng_open */
-[[nodiscard]] QPNG_API qpng_status qpng_apng_raw_frame(qpng_apng *apng, uint32_t index, const qpng_decode_options *opts, qpng_image *img,
+QPNG_API qpng_status qpng_apng_raw_frame(qpng_apng *apng, uint32_t index, const qpng_decode_options *opts, qpng_image *img,
                                    qpng_frame_info *frame);
 QPNG_API void qpng_apng_free(qpng_apng *apng);
 
@@ -352,7 +352,7 @@ QPNG_API void qpng_apng_free(qpng_apng *apng);
  * nullptr: frame 0 is the default image (must cover the canvas at offset 0); otherwise default_image (canvas size,
  * default_stride) is a separate still image that is not part of the animation. */
 typedef struct { const void *pixels; size_t stride; qpng_frame_info info; } qpng_apng_frame;
-[[nodiscard]] QPNG_API qpng_status qpng_encode_apng(uint32_t width, uint32_t height, qpng_color color, int bit_depth, const qpng_apng_frame *frames,
+QPNG_API qpng_status qpng_encode_apng(uint32_t width, uint32_t height, qpng_color color, int bit_depth, const qpng_apng_frame *frames,
                                 uint32_t frame_count, uint32_t num_plays, const void *default_image, size_t default_stride,
                                 const qpng_encode_options *opts, uint8_t **out, size_t *out_size);
 

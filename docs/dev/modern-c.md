@@ -45,9 +45,11 @@ pointer when the length may be zero.
 
 ## Public header
 
-`include/qpng.h` marks fallible APIs `[[nodiscard]]` (ABI unchanged). Comments
-use `nullptr`. The header keeps plain pointer parameters and plain enums so
-C++ / pre-C23 consumers keep working; array-parameter notation stays internal.
+`include/qpng.h` marks the `qpng_status` enum `[[nodiscard]]` (ABI unchanged), so
+one attribute covers every function that returns a status; pure queries such as
+`qpng_status_string` and `qpng_backend_available` are not marked. Comments use
+`nullptr`. The header keeps plain pointer parameters so C++ / pre-C23 consumers
+keep working; array-parameter notation stays internal.
 
 ## Warnings
 

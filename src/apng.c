@@ -21,7 +21,7 @@ struct qpng_apng {
 };
 static const qpng_allocator *aA(const qpng_apng *a) { return a->has_a ? &a->a : nullptr; }
 
-static int add_seg(qpng_apng *a, const uint8_t *p, uint32_t n) {
+[[nodiscard]] static int add_seg(qpng_apng *a, const uint8_t *p, uint32_t n) {
     qpng_seg *ns = qpng__grow(aA(a), a->seg, a->nseg, &a->capseg, (size_t)a->nseg + 1, sizeof *ns, 64);
     if (!ns) return 0;
     a->seg = ns;

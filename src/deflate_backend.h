@@ -20,11 +20,11 @@ typedef struct {
 /* Built with designated-initializer literals; omitted fields are 0 = "backend / level default":
  *   (qpng_zcfg){ .backend = QPNG_BACKEND_LIBDEFLATE, .level = 5, .minlen = 3 } */
 
-[[nodiscard]] bool qpng__backend_available(int backend);
+bool qpng__backend_available(int backend);
 /* level in range for its backend, backend compiled in */
-[[nodiscard]] bool qpng__zcfg_valid(const qpng_zcfg c[static 1]);
+bool qpng__zcfg_valid(const qpng_zcfg c[static 1]);
 /* worst-case zlib stream size for n input bytes over every backend and level */
-[[nodiscard]] size_t qpng__zbound(size_t n);
+size_t qpng__zbound(size_t n);
 /* compress src[0..n) into a complete zlib stream at dst (capacity cap >= qpng__zbound(n)); returns its size, or 0
  * with *st set */
 [[nodiscard]] size_t qpng__zcompress(const qpng_zcfg c[static 1], const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
@@ -43,7 +43,7 @@ typedef struct qpng_zstream qpng_zstream;
 [[nodiscard]] qpng_zstream *qpng__zstream_new(const qpng_zcfg c[static 1], const qpng_allocator *A, qpng_zsink sink,
                                              void *ctx, qpng_status st[static 1]);
 /* compress the next n bytes (png-ultra: n <= QPNG_ZSTREAM_MAX_CHUNK and in[-1] readable); final ends the stream */
-[[nodiscard]] qpng_status qpng__zstream_write(qpng_zstream *z, const uint8_t *in, size_t n, bool final);
+qpng_status qpng__zstream_write(qpng_zstream *z, const uint8_t *in, size_t n, bool final);
 void qpng__zstream_free(qpng_zstream *z);
 constexpr size_t QPNG_ZSTREAM_MAX_CHUNK = 262144 + 4096;
 

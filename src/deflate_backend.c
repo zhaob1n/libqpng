@@ -36,7 +36,7 @@ size_t qpng__zbound(size_t n) {
 static void ld_releasep(struct libdeflate_compressor **z) { libdeflate_free_compressor(*z); *z = nullptr; }
 #define ld_owned QPNG_CLEANUP(ld_releasep) struct libdeflate_compressor
 
-static struct libdeflate_compressor *ld_make(const qpng_zcfg *c) {
+[[nodiscard]] static struct libdeflate_compressor *ld_make(const qpng_zcfg *c) {
     if (c->level < QPNG_DEFLATE_QPNG) {
         struct libdeflate_compressor *z = libdeflate_alloc_compressor(c->level);
         if (z && (c->depth || c->nice)) libdeflate_set_search_params(z, (unsigned)c->depth, (unsigned)c->nice);
@@ -50,7 +50,7 @@ static struct libdeflate_compressor *ld_make(const qpng_zcfg *c) {
     return z;
 }
 
-static size_t ld_compress(const qpng_zcfg *c, const uint8_t *src, size_t n, uint8_t *dst, size_t cap, qpng_status *st) {
+[[nodiscard]] static size_t ld_compress(const qpng_zcfg *c, const uint8_t *src, size_t n, uint8_t *dst, size_t cap, qpng_status *st) {
     ld_owned *z = ld_make(c);
     if (!z) { *st = QPNG_ERR_NOMEM; return 0; }
     const size_t zn = libdeflate_zlib_compress(z, src, n, dst, cap);
@@ -72,13 +72,13 @@ static zng_stream zng_on(const qpng_allocator *A) {
     return (zng_stream){ .zalloc = zng_alloc_cb, .zfree = zng_free_cb, .opaque = (void *)A };
 }
 /* window 32 KiB, memLevel 9 (128 KiB hash / symbol buffer: measured smaller on graphics than 8 at equal speed) */
-static bool zng_deflate_init(zng_stream *s, const qpng_zcfg *c) {
+[[nodiscard]] static bool zng_deflate_init(zng_stream *s, const qpng_zcfg *c) {
     return zng_deflateInit2(s, c->level, Z_DEFLATED, 15, 9, c->strategy) == Z_OK;
 }
 /* owner of an initialised deflate stream: declared only after init succeeded */
 static void zng_deflate_endp(zng_stream **s) { if (*s) zng_deflateEnd(*s); *s = nullptr; }
 
-static size_t zng_compress_all(const qpng_zcfg *c, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
+[[nodiscard]] static size_t zng_compress_all(const qpng_zcfg *c, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
                                const qpng_allocator *A, qpng_status *st) {
     zng_stream s = zng_on(A);
     if (!zng_deflate_init(&s, c)) { *st = QPNG_ERR_NOMEM; return 0; }

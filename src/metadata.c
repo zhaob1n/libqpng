@@ -41,7 +41,7 @@ void qpng_metadata_free(qpng_metadata *meta) {
 static void free_decompressor(struct libdeflate_decompressor **d) { libdeflate_free_decompressor(*d); }
 
 /* zlib stream -> new buffer (allocator A) of at most `limit` bytes; nullptr if invalid / too large */
-static uint8_t *inflate_limited(const uint8_t *src, size_t n, size_t limit, const qpng_allocator *A, size_t *outn) {
+[[nodiscard]] static uint8_t *inflate_limited(const uint8_t *src, size_t n, size_t limit, const qpng_allocator *A, size_t *outn) {
     QPNG_CLEANUP(free_decompressor) struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
     if (!d) return nullptr;
     /* libdeflate needs the output size: grow x4 up to the limit */
@@ -246,7 +246,7 @@ static int chunk_type_ok(const char *t) {
 
 static void wb_str(qpng__wbuf *w, const char *s) { qpng__wb_put(w, s, strlen(s) + 1); }
 
-static uint8_t *zlib9(const void *src, size_t n, size_t *zn, const qpng_allocator *A) {
+[[nodiscard]] static uint8_t *zlib9(const void *src, size_t n, size_t *zn, const qpng_allocator *A) {
     struct libdeflate_compressor *c = libdeflate_alloc_compressor(9);
     if (!c) return nullptr;
     size_t cap = libdeflate_zlib_compress_bound(c, n);

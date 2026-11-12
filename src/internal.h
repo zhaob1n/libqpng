@@ -66,7 +66,7 @@ static inline __m128i qpng__paeth_epi16(__m128i a, __m128i b, __m128i c) {
 
 /* ---- IHDR payload (13 bytes). parse (decode.c) validates and fills the IHDR fields and channels of *info,
  * leaving the rest untouched; also checks the decode size limits when o is given ---- */
-[[nodiscard]] qpng_status qpng__parse_ihdr(const uint8_t ih[static 13], const qpng_decode_options *o, qpng_info info[static 1]);
+qpng_status qpng__parse_ihdr(const uint8_t ih[static 13], const qpng_decode_options *o, qpng_info info[static 1]);
 static inline void qpng__put_ihdr(uint8_t ih[static 13], uint32_t w, uint32_t h, int depth, int color) {
     wbe32(ih, w); wbe32(ih + 4, h);
     ih[8] = (uint8_t)depth; ih[9] = (uint8_t)color; ih[10] = ih[11] = ih[12] = 0;

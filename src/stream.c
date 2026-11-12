@@ -70,9 +70,9 @@ qpng_status qpng_decoder_info(const qpng_decoder *d, qpng_info *info) {
     return QPNG_OK;
 }
 
-[[nodiscard]] static qpng_status d_fail(qpng_decoder *d, qpng_status s) { d->state = D_ERR; d->err = s; return s; }
+static qpng_status d_fail(qpng_decoder *d, qpng_status s) { d->state = D_ERR; d->err = s; return s; }
 
-static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
+[[nodiscard]] static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
     if (!n) return 1;
     size_t need;
     uint8_t *nb = qpng__add_size(&need, d->nall, n) ? nullptr : qpng__grow(dA(d), d->all, d->nall, &d->call, need, 1, 65536);
@@ -83,7 +83,7 @@ static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
 }
 
 /* first IDAT: validate the header chunks, choose the mode, set up STREAM state */
-[[nodiscard]] static qpng_status d_begin_image(qpng_decoder *d) {
+static qpng_status d_begin_image(qpng_decoder *d) {
     const qpng_info *in = &d->info;
     if (in->color_type == 3 && !d->has_plte) return QPNG_ERR_CHUNK;
     if (d->has_trns) {
@@ -121,7 +121,7 @@ static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
 }
 
 /* STREAM mode: one full filtered row in d->cur */
-[[nodiscard]] static qpng_status d_row(qpng_decoder *d) {
+static qpng_status d_row(qpng_decoder *d) {
     const int f = d->cur[0];
     if (f > 4) return QPNG_ERR_FILTER;
     if (d->o.verify_adler) d->adler = libdeflate_adler32(d->adler, d->cur, d->rs);
@@ -137,7 +137,7 @@ static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
 }
 
 /* STREAM mode: IDAT payload bytes */
-[[nodiscard]] static qpng_status d_idat(qpng_decoder *d, const uint8_t *p, size_t n) {
+static qpng_status d_idat(qpng_decoder *d, const uint8_t *p, size_t n) {
     while (n) {
         if (d->zhdr < 2) {
             d->zh[d->zhdr++] = *p++; n--;
@@ -164,7 +164,7 @@ static int keep_all(qpng_decoder *d, const uint8_t *p, size_t n) {
 }
 
 /* a complete non-IDAT chunk (header ones kept in d->body) */
-[[nodiscard]] static qpng_status d_chunk_done(qpng_decoder *d) {
+static qpng_status d_chunk_done(qpng_decoder *d) {
     const uint8_t *t = d->ctype;
     if (!memcmp(t, "IHDR", 4)) {
         if (d->have_info || d->clen != 13) return QPNG_ERR_HEADER;
@@ -302,17 +302,17 @@ struct qpng_encoder {
     size_t sunk;                  /* compressed bytes produced (hybrid filter decision) */
 };
 
-[[nodiscard]] static qpng_status e_out(qpng_encoder *e, const uint8_t *p, size_t n) {
+static qpng_status e_out(qpng_encoder *e, const uint8_t *p, size_t n) {
     return n && e->write(e->user, p, n) ? QPNG_ERR_ABORTED : QPNG_OK;
 }
-[[nodiscard]] static qpng_status e_flush_idat(qpng_encoder *e) {
+static qpng_status e_flush_idat(qpng_encoder *e) {
     if (!e->nidat) return QPNG_OK;
     const uint8_t *end = qpng__put_chunk(e->idat, "IDAT", nullptr, (uint32_t)e->nidat);
     e->nidat = 0;
     return e_out(e, e->idat, (size_t)(end - e->idat));
 }
 /* qpng_zsink: compressed bytes -> IDAT chunks */
-[[nodiscard]] static qpng_status e_sink(void *ctx, const uint8_t *p, size_t n) {
+static qpng_status e_sink(void *ctx, const uint8_t *p, size_t n) {
     qpng_encoder *e = ctx;
     e->sunk += n;
     while (n) {
@@ -402,7 +402,7 @@ qpng_status qpng_encoder_new(uint32_t w, uint32_t h, qpng_color color, int depth
 }
 
 /* filter + compress the pending rows (rows[1..nrows], rows[0] = predecessor) */
-[[nodiscard]] static qpng_status e_compress(qpng_encoder *e, int final) {
+static qpng_status e_compress(qpng_encoder *e, int final) {
     const size_t len = (size_t)e->nrows * (e->n + 1);
     const int f = e->hybrid && e->big ? QPNG_FILTER_UP : e->filter;
     if (e->nrows) qpng__filter_rows(e->filt + 1, e->rows, e->n, 1, e->nrows + 1, e->n, e->bpp, f);
