@@ -26,10 +26,10 @@ int main(int argc, char **argv) {
             qpng_decode_options_init(&o);
             o.output = modes[m];
             qpng_image im = {};
-            qpng_status s = qpng_decode(buf, n, &o, &im);
+            qpng_status s = qpng_decode(n, buf, &o, &im);
             char got[128];
             if (s) snprintf(got, sizeof got, "ERR");
-            else snprintf(got, sizeof got, "%ux%u:%zu:%016llx", im.width, im.height, im.size, (unsigned long long)fnv1a(im.pixels, im.size));
+            else snprintf(got, sizeof got, "%ux%u:%zu:%016llx", im.width, im.height, im.size, (unsigned long long)fnv1a(im.size, im.pixels));
             checks++;
             if (strcmp(got, ref[m])) {
                 fprintf(stderr, "MISMATCH %s [%s]: got %s (%s) want %s\n", name, mname[m], got, s ? qpng_status_string(s) : "ok", ref[m]);

@@ -28,7 +28,7 @@ chart: `python3 bench/scenario_chart.py`.*
 
 ## Build
 
-Needs GCC 16 or Clang 23 (`-std=gnu2y`); the public header itself works from C99 and C++17.
+Needs GCC 16 or Clang 23 (`-std=gnu2y`).
 Developer notes: [`docs/dev/modern-c.md`](docs/dev/modern-c.md).
 
 ```sh
@@ -52,9 +52,9 @@ Consumers: `pkg-config --cflags --libs qpng` or `find_package(qpng)` + `qpng::qp
 qpng_decode_options dopt;
 qpng_decode_options_init(&dopt);
 dopt.output = QPNG_OUTPUT_IMAGERS;          /* or QPNG_OUTPUT_RAW / QPNG_OUTPUT_EXPAND */
-dopt.max_output_bytes = 256u << 20;       /* bomb limit (default 1 GiB) */
+dopt.max_output_bytes = 256u << 20;         /* bomb limit (default 1 GiB) */
 qpng_image img;
-qpng_status s = qpng_decode(png, png_size, &dopt, &img);
+qpng_status s = qpng_decode(png_size, png, &dopt, &img);
 if (s != QPNG_OK) { fprintf(stderr, "%s\n", qpng_status_string(s)); return 1; }
 /* img.pixels: img.height rows of img.stride bytes; img.channels, img.bit_depth, img.color_type */
 qpng_image_free(&img);
@@ -70,7 +70,7 @@ eopt.preset = QPNG_PRESET_DEFAULT;          /* FASTEST, FAST, DEFAULT, BEST */
 uint8_t *out; size_t out_size;
 s = qpng_encode(pixels, width, height, 0 /* stride, 0 = packed */, QPNG_COLOR_RGBA, 8, &eopt, &out, &out_size);
 /* ... */
-qpng_buffer_free(out, NULL);                /* same allocator as eopt.allocator */
+qpng_buffer_free(out, nullptr);             /* same allocator as eopt.allocator */
 ```
 
 `qpng_read_info()` parses IHDR without decoding. Custom allocation: fill a `qpng_allocator {alloc, free, user}`
@@ -82,7 +82,7 @@ what `QPNG_OUTPUT_RAW` decoding returns.
 
 ```c
 qpng_metadata meta;                                  /* tEXt/zTXt/iTXt, iCCP, sRGB, gAMA, cHRM, cICP, mDCV, cLLI, */
-if (qpng_read_metadata(png, png_size, NULL, &meta) == QPNG_OK) {   /* pHYs, tIME, bKGD, sBIT, eXIf, unknown chunks */
+if (qpng_read_metadata(png_size, png, nullptr, &meta) == QPNG_OK) { /* pHYs, tIME, bKGD, sBIT, eXIf, unknown chunks */
     for (size_t i = 0; i < meta.text_count; i++) printf("%s: %s\n", meta.texts[i].keyword, meta.texts[i].text);
     if (meta.iccp) use_profile(meta.iccp, meta.iccp_size);       /* decompressed */
     eopt.metadata = &meta;                         /* write everything back (unknown chunks at their place) */
@@ -90,8 +90,8 @@ if (qpng_read_metadata(png, png_size, NULL, &meta) == QPNG_OK) {   /* pHYs, tIME
     qpng_metadata_free(&meta);
 }
 /* writing from scratch: */
-qpng_text t = { QPNG_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", 1 };
-qpng_metadata m = {0}; m.texts = &t; m.text_count = 1; m.has_phys = 1; m.phys_x = m.phys_y = 2835; m.phys_unit = 1;
+qpng_text t = { QPNG_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", true };
+qpng_metadata m = {}; m.texts = &t; m.text_count = 1; m.has_phys = true; m.phys_x = m.phys_y = 2835; m.phys_unit = 1;
 eopt.metadata = &m;
 ```
 
@@ -104,19 +104,19 @@ and bKGD are informational).
 
 ```c
 /* decode: push bytes as they arrive; rows are delivered through a callback */
-static int on_row(void *user, uint32_t y, const uint8_t *row, size_t n) { consume(row, n); return 0; }
-qpng_decoder *dec; qpng_decoder_new(&dopt, on_row, user, &dec);    /* row_cb NULL: whole image at finish */
+static int on_row(void *user, uint32_t y, size_t n, const uint8_t row[static n]) { consume(row, n); return 0; }
+qpng_decoder *dec; qpng_decoder_new(&dopt, on_row, user, &dec);    /* row_cb nullptr: whole image at finish */
 while ((n = recv(sock, buf, sizeof buf, 0)) > 0) {
-    s = qpng_decoder_push(dec, buf, n);           /* QPNG_MORE_DATA, QPNG_OK after IEND, or an error */
+    s = qpng_decoder_push(dec, (size_t)n, buf);   /* QPNG_MORE_DATA, QPNG_OK after IEND, or an error */
     if (qpng_decoder_info(dec, &info) == QPNG_OK) { /* header available as soon as IHDR arrived */ }
     if (s != QPNG_MORE_DATA) break;
 }
-if (s == QPNG_OK) s = qpng_decoder_finish(dec, NULL /* or &img in image mode */);
+if (s == QPNG_OK) s = qpng_decoder_finish(dec, nullptr /* or &img in image mode */);
 qpng_decoder_free(dec);
-/* or pull: qpng_decode_stream(read_fn, file, &dopt, on_row, user, NULL); */
+/* or pull: qpng_decode_stream(read_fn, file, &dopt, on_row, user, nullptr); */
 
 /* encode: rows in, bytes out through a write callback, bounded memory */
-static int wr(void *f, const uint8_t *p, size_t n) { return fwrite(p, 1, n, f) != n; }
+static int wr(void *f, size_t n, const uint8_t p[static n]) { return fwrite(p, 1, n, f) != n; }
 qpng_encoder *enc; qpng_encoder_new(w, h, QPNG_COLOR_RGBA, 8, &eopt, wr, file, &enc);
 for (y = 0; y < h; y += k) qpng_encoder_push_rows(enc, rows + y * stride, stride, k);
 qpng_encoder_finish(enc); qpng_encoder_free(enc);
@@ -134,19 +134,19 @@ compresses FASTEST/FAST with libdeflate's streamed png-ultra (as one-shot) and D
 
 ```c
 qpng_apng *a;
-if (qpng_apng_open(png, size, NULL, &a) == QPNG_OK) {           /* png must stay valid until qpng_apng_free */
-    qpng_apng_info ai; qpng_apng_get_info(a, &ai);                /* num_frames, num_plays, canvas size */
+if (qpng_apng_open(size, png, nullptr, &a) == QPNG_OK) {           /* png must stay valid until qpng_apng_free */
+    qpng_apng_info ai; qpng_apng_get_info(a, &ai);                 /* num_frames, num_plays, canvas size */
     const uint8_t *canvas; qpng_frame_info fi;
     while (qpng_apng_next_frame(a, &canvas, &fi) == QPNG_OK)       /* composed RGBA8 canvas, width * 4 stride */
         show(canvas, fi.delay_num, fi.delay_den ? fi.delay_den : 100);
-    qpng_image raw; qpng_apng_raw_frame(a, 1, NULL, &raw, &fi);   /* one frame's own pixels, any output layout */
+    qpng_image raw; qpng_apng_raw_frame(a, 1, nullptr, &raw, &fi); /* one frame's own pixels, any output layout */
     qpng_image_free(&raw);
     qpng_apng_free(a);
 }
 /* encode: frames of their own size + offsets, dispose / blend ops, delays */
 qpng_apng_frame fr[2] = { { px0, 0, { W, H, 0, 0, 1, 10, QPNG_DISPOSE_NONE, QPNG_BLEND_SOURCE } },
-                        { px1, 0, { 16, 16, 8, 8, 1, 10, QPNG_DISPOSE_PREVIOUS, QPNG_BLEND_OVER } } };
-qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, fr, 2, 0 /* loop forever */, NULL, 0, &eopt, &out, &out_size);
+                          { px1, 0, { 16, 16, 8, 8, 1, 10, QPNG_DISPOSE_PREVIOUS, QPNG_BLEND_OVER } } };
+qpng_encode_apng(W, H, QPNG_COLOR_RGBA, 8, 2, fr, 0 /* loop forever */, nullptr, 0, &eopt, &out, &out_size);
 ```
 
 Semantics follow the APNG spec / browsers (canvas starts transparent black, first-frame DISPOSE_PREVIOUS acts as

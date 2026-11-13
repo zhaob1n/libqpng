@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
 
     if (!strcmp(argv[1], "info")) {
         qpng_info in = {};
-        qpng_status s = qpng_read_info(buf, n, &in);
+        qpng_status s = qpng_read_info(n, buf, &in);
         if (s) { printf("error: %s\n", qpng_status_string(s)); return 1; }
         printf("%ux%u depth %u color %u interlaced %u channels %u plte %u trns %u\n", in.width, in.height, in.bit_depth,
                in.color_type, in.interlaced, in.channels, in.palette_entries, in.trns_bytes);
@@ -28,18 +28,18 @@ int main(int argc, char **argv) {
             o.output = !strcmp(argv[4], "expand")   ? QPNG_OUTPUT_EXPAND
                      : !strcmp(argv[4], "imagers")  ? QPNG_OUTPUT_IMAGERS
                                                     : QPNG_OUTPUT_RAW;
-        if (argc > 5 && !strcmp(argv[5], "--adler")) o.verify_adler = 1;
+        if (argc > 5 && !strcmp(argv[5], "--adler")) o.verify_adler = true;
         qpng_image im = {};
-        qpng_status s = qpng_decode(buf, n, &o, &im);
+        qpng_status s = qpng_decode(n, buf, &o, &im);
         if (s) { fprintf(stderr, "decode error: %s\n", qpng_status_string(s)); return 1; }
         printf("%u %u %u %u %u\n", im.width, im.height, im.channels, im.bit_depth, im.color_type);
-        int r = qpng_tool_spit(argv[3], im.pixels, im.size);
+        int r = qpng_tool_spit(argv[3], im.size, im.pixels);
         qpng_image_free(&im);
         return r;
     }
     if (!strcmp(argv[1], "encode") && argc >= 4) {
         qpng_image im = {};
-        qpng_status s = qpng_decode(buf, n, nullptr, &im);
+        qpng_status s = qpng_decode(n, buf, nullptr, &im);
         if (s) { fprintf(stderr, "decode error: %s\n", qpng_status_string(s)); return 1; }
         qpng_encode_options o = {};
         qpng_encode_options_init(&o);
@@ -50,17 +50,13 @@ int main(int argc, char **argv) {
                                                    : QPNG_PRESET_DEFAULT;
         if (argc > 5) o.filter = atoi(argv[5]);
         if (argc > 6) o.deflate_level = atoi(argv[6]);
-        int pl = 0, tl = 0;
-        o.palette = qpng_tool_find_chunk(buf, n, "PLTE", &pl);
-        o.palette_entries = o.palette ? pl / 3 : 0;
-        o.trns = qpng_tool_find_chunk(buf, n, "tRNS", &tl);
-        o.trns_bytes = o.trns ? tl : 0;
+        qpng_tool_carry_plte_trns(n, buf, im.color_type, &o);
         uint8_t *png = nullptr;
         size_t pn = 0;
         s = qpng_encode(im.pixels, im.width, im.height, im.stride, (qpng_color)im.color_type, im.bit_depth, &o, &png, &pn);
         qpng_image_free(&im);
         if (s) { fprintf(stderr, "encode error: %s\n", qpng_status_string(s)); return 1; }
-        int r = qpng_tool_spit(argv[3], png, pn);
+        int r = qpng_tool_spit(argv[3], pn, png);
         qpng_buffer_free(png, nullptr);
         return r;
     }

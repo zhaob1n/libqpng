@@ -27,23 +27,23 @@ bool qpng__zcfg_valid(const qpng_zcfg c[static 1]);
 size_t qpng__zbound(size_t n);
 /* compress src[0..n) into a complete zlib stream at dst (capacity cap >= qpng__zbound(n)); returns its size, or 0
  * with *st set */
-[[nodiscard]] size_t qpng__zcompress(const qpng_zcfg c[static 1], const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
-                                     const qpng_allocator *A, qpng_status st[static 1]);
+[[nodiscard]] size_t qpng__zcompress(const qpng_zcfg c[static 1], size_t n, const uint8_t src[n], size_t cap,
+                                     uint8_t dst[static cap], const qpng_allocator *A, qpng_status st[static 1]);
 /* libdeflate png-ultra, streamed: rows are filtered (mode `filter`; hybrid: Up after strongly compressible chunks)
  * into an L2-sized buffer and compressed chunk by chunk. */
 [[nodiscard]] size_t qpng__zcompress_ultra_rows(const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int filter,
-                                                bool hybrid, uint8_t *dst, size_t cap, const qpng_allocator *A,
+                                                bool hybrid, size_t cap, uint8_t dst[static cap], const qpng_allocator *A,
                                                 qpng_status st[static 1]);
 
 /* ---- streaming (qpng_encoder / qpng_decoder) ---- */
 /* compressed-output sink; returns QPNG_OK or an error that aborts the stream */
-typedef qpng_status (*qpng_zsink)(void *ctx, const uint8_t *data, size_t n);
+typedef qpng_status (*qpng_zsink)(void *ctx, size_t n, const uint8_t data[static n]);
 typedef struct qpng_zstream qpng_zstream;
 /* streamable configs: libdeflate QPNG_DEFLATE_PNGULTRA, zlib-ng levels 1-9 (else nullptr with *st = UNSUPPORTED) */
 [[nodiscard]] qpng_zstream *qpng__zstream_new(const qpng_zcfg c[static 1], const qpng_allocator *A, qpng_zsink sink,
                                              void *ctx, qpng_status st[static 1]);
 /* compress the next n bytes (png-ultra: n <= QPNG_ZSTREAM_MAX_CHUNK and in[-1] readable); final ends the stream */
-qpng_status qpng__zstream_write(qpng_zstream *z, const uint8_t *in, size_t n, bool final);
+qpng_status qpng__zstream_write(qpng_zstream *z, size_t n, const uint8_t *in, bool final);
 void qpng__zstream_free(qpng_zstream *z);
 constexpr size_t QPNG_ZSTREAM_MAX_CHUNK = 262144 + 4096;
 
@@ -51,9 +51,8 @@ constexpr size_t QPNG_ZSTREAM_MAX_CHUNK = 262144 + 4096;
 typedef struct qpng_zistream qpng_zistream;
 [[nodiscard]] qpng_zistream *qpng__zistream_new(const qpng_allocator *A);
 typedef enum : int8_t { QPNG_ZRUN_BAD = -1, QPNG_ZRUN_MORE, QPNG_ZRUN_END } qpng_zrun;
-/* inflate from in[0..n) into out[0..cap); *used / *made report progress. MORE: needs more input or output space.
- * Numeric values match the previous -1 / 0 / 1 contract used by stream.c. */
-[[nodiscard]] qpng_zrun qpng__zistream_run(qpng_zistream *z, const uint8_t *in, size_t n, size_t used[static 1],
-                                           uint8_t *out, size_t cap, size_t made[static 1]);
+/* inflate from in[0..n) into out[0..cap); *used / *made report progress. MORE: needs more input or output space. */
+[[nodiscard]] qpng_zrun qpng__zistream_run(qpng_zistream *z, size_t n, const uint8_t in[static n],
+                                           size_t used[static 1], size_t cap, uint8_t out[static cap], size_t made[static 1]);
 void qpng__zistream_free(qpng_zistream *z);
 #endif

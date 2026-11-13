@@ -26,7 +26,7 @@ static const char *base(const char *p) {
     const char *s = strrchr(p, '/');
     return s ? s + 1 : p;
 }
-static void dump(const char *file, const char *tag, const void *d, size_t n) {
+static void dump(const char *file, const char *tag, size_t n, const uint8_t d[n]) {
     const char *dir = getenv("DUMP_DIR");
     if (!dir) return;
     char path[4096];
@@ -50,7 +50,7 @@ static int deflate_level(const char *s) {
            !strcmp(s, "ultra") ? -3 : atoi(s);
 }
 
-[[nodiscard]] static uint8_t *must_slurp(const char *path, size_t *n) {
+[[nodiscard]] static uint8_t *must_slurp(const char path[static 1], size_t n[static 1]) {
     uint8_t *b = qpng_tool_slurp(path, n);
     if (!b) { perror(path); exit(2); }
     return b;
@@ -141,7 +141,7 @@ int main(int argc, char **argv) {
                 if (r == reps) {
                     char tag[64];
                     snprintf(tag, sizeof tag, "qpng-%s.zlib", param);
-                    dump(file, tag, out, m);
+                    dump(file, tag, m, out);
                 }
                 if (r) printf("qpng,deflate,%s,%s,%d,0,0,%lld,%zu\n", param, file, r, dt, m);
             }
@@ -156,10 +156,10 @@ int main(int argc, char **argv) {
             for (int r = 0; r <= reps; r++) {
                 qpng_image im = {};
                 long long t0 = now_ns();
-                qpng_status s = qpng_decode(buf, n, &o, &im);
+                qpng_status s = qpng_decode(n, buf, &o, &im);
                 long long dt = now_ns() - t0;
                 if (s) { fprintf(stderr, "FAIL decode %s: %s\n", file, qpng_status_string(s)); return 1; }
-                if (r == reps) dump(file, "qpng.raw", im.pixels, im.size);
+                if (r == reps) dump(file, "qpng.raw", im.size, im.pixels);
                 if (r) printf("qpng,decode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, im.size);
                 qpng_image_free(&im);
             }
@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
         }
         if (!strcmp(op, "encode")) {
             qpng_image im = {};
-            qpng_status s = qpng_decode(buf, n, nullptr, &im);
+            qpng_status s = qpng_decode(n, buf, nullptr, &im);
             if (s) { fprintf(stderr, "FAIL source decode %s\n", file); return 1; }
             qpng_encode_options o = {};
             qpng_encode_options_init(&o);
@@ -197,11 +197,7 @@ int main(int argc, char **argv) {
                     o.nice_length = (int)g_nice;
                 }
             }
-            int pl = 0, tl = 0;
-            o.palette = qpng_tool_find_chunk(buf, n, "PLTE", &pl);
-            o.palette_entries = o.palette ? pl / 3 : 0;
-            o.trns = qpng_tool_find_chunk(buf, n, "tRNS", &tl);
-            o.trns_bytes = o.trns ? tl : 0;
+            qpng_tool_carry_plte_trns(n, buf, im.color_type, &o);
             for (int r = 0; r <= reps; r++) {
                 uint8_t *png = nullptr;
                 size_t pn = 0;
@@ -212,7 +208,7 @@ int main(int argc, char **argv) {
                 if (r == reps) {
                     char tag[96];
                     snprintf(tag, sizeof tag, "qpng-%s.png", param);
-                    dump(file, tag, png, pn);
+                    dump(file, tag, pn, png);
                 }
                 if (r) printf("qpng,encode,%s,%s,%d,%u,%u,%lld,%zu\n", param, file, r, im.width, im.height, dt, pn);
                 qpng_buffer_free(png, nullptr);

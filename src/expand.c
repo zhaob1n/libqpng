@@ -4,10 +4,11 @@
  * (including its gray tRNS low-byte compare and black/opaque out-of-range palette indices). */
 #include "internal.h"
 
-void qpng__xform_setup(qpng_xform *c, int color, int depth, int ich, uint32_t W, qpng_output output,
-                     const uint8_t *plte, uint32_t plen, const uint8_t *trns, uint32_t tlen,
-                     int *och_, int *odepth_, int *ocolor_) {
-    const int expand = output != QPNG_OUTPUT_RAW, native16 = output == QPNG_OUTPUT_IMAGERS && depth == 16;
+void qpng__xform_setup(qpng_xform c[static 1], int color, int depth, int ich, uint32_t W, qpng_output output,
+                       uint32_t plen, const uint8_t plte[3 * (size_t)plen],
+                       uint32_t tlen, const uint8_t trns[tlen],
+                       int och_[static 1], int odepth_[static 1], int ocolor_[static 1]) {
+    const bool expand = output != QPNG_OUTPUT_RAW, native16 = output == QPNG_OUTPUT_IMAGERS && depth == 16;
     *c = (qpng_xform){ .depth = depth, .ich = ich, .W = W, .native16 = native16 };
     int och = ich, odepth = depth, ocolor = color;
     if (expand && color == 3) {
@@ -32,7 +33,7 @@ void qpng__xform_setup(qpng_xform *c, int color, int depth, int ich, uint32_t W,
 }
 
 /* transform one unfiltered row of w pixels (input format) into output pixels at o */
-void qpng__xform_row(const qpng_xform *c, const uint8_t *s, uint8_t *o, uint32_t w) {
+void qpng__xform_row(const qpng_xform *c, uint32_t w, const uint8_t *s, uint8_t *o) {
     const int d = c->depth;
     switch (c->xf) {
     case XF_PAL:
@@ -81,7 +82,7 @@ void qpng__xform_row(const qpng_xform *c, const uint8_t *s, uint8_t *o, uint32_t
         break; }
     }
 }
-void qpng__swap16(uint8_t *p, size_t n) {   /* SSE2: (x << 8) | (x >> 8) per 16-bit lane */
+void qpng__swap16(size_t n, uint8_t p[static n]) {   /* SSE2: (x << 8) | (x >> 8) per 16-bit lane */
     size_t i = 0;
 #if QPNG_X86
     for (; i + 16 <= n; i += 16) {

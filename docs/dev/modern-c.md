@@ -32,24 +32,46 @@ past its scope.
 
 ## Size arithmetic
 
-Use `<stdckdint.h>` via `qpng__mul_size` / `qpng__add_size` (true on overflow)
-instead of open-coded `a * b` checks. `<stdbit.h>` is included for bit queries.
+Use `<stdckdint.h>` via `qpng__mul_size` / `qpng__add_size` / `qpng__row_bytes`
+(true on overflow) instead of open-coded `a * b` checks — `(uint64_t)h * (rowbytes + 1)`
+wraps $2^{64}$ on valid 31-bit PNG dimensions. `<stdbit.h>` is included for bit queries.
 
 ## Array parameters
 
-`T p[static N]` is fine for fixed `N ≥ 1`. **Never** write `T p[n]` /
-`T p[static n]` when `n` can be 0: `static` requires nonnull and ≥ N elements,
-and a zero-bound VLA parameter is undefined behaviour (UBSan
-`-fsanitize=vla-bound` / libFuzzer found this on an empty chunk). Use a plain
-pointer when the length may be zero.
+Put length parameters before dependent array parameters:
+
+* `T p[static 1]` / `T p[static N]` / `size_t n, T p[static n]` — nonnull with ≥
+  stated elements. GCC and Clang elide `if (!p)` at `-O2` and UBSan traps on
+  `nullptr`, so omit `static` (`size_t n, T p[n]` or `T *p`) whenever `nullptr`
+  is valid or diagnosed at run time (`QPNG_ERR_ARGUMENT`). Opaque incomplete
+  structs (`qpng_decoder`, `qpng_zstream`) cannot form array parameters; keep `T *`.
+* GCC 16 treats the declared bound as the callee's upper bound too
+  (`-Warray-bounds`, `-fsanitize=object-size`): never write `[static 1]` on an
+  indexed buffer, spell composite extents honestly (`qpng__put_chunk` takes
+  `p[static (size_t)len + 12]`), and keep typed pointers (`uint8_t *`) on
+  strided 2D buffers (`stride == 0` means packed) and SIMD kernels that access
+  tail padding (`unfilter.c`) or `in[-1]` (`qpng__zstream_write`).
+* `n == 0` in `T p[n]` / `T p[static n]` is valid in C2y (adjusted pointer
+  parameter, not a VLA object). GCC 16 UBSan accepts it; Clang 23's
+  `-fsanitize=vla-bound` falsely instruments parameter bounds, so
+  `CMakeLists.txt` disables `vla-bound` on Clang sanitizer builds.
+* Keep parameter names identical between prototype and definition when a bound
+  expression does arithmetic on them (`3 * (size_t)plen`, `(size_t)h * (n + 1)`),
+  otherwise GCC's `-Wvla-parameter` diagnoses a bound mismatch.
+* GCC 16 `-fsanitize=address` + `-Wstringop-overread` miscomputes subobject size
+  on inlined read-only calls taking `&p->x` (trailing `qpng_xform` through a
+  struct pointer) as `const T x[static 1]`; `qpng__xform_row` keeps
+  `const qpng_xform *` for that reason.
 
 ## Public header
 
-`include/qpng.h` marks the `qpng_status` enum `[[nodiscard]]` (ABI unchanged), so
-one attribute covers every function that returns a status; pure queries such as
-`qpng_status_string` and `qpng_backend_available` are not marked. Comments use
-`nullptr`. The header keeps plain pointer parameters so C++ / pre-C23 consumers
-keep working; array-parameter notation stays internal.
+`include/qpng.h` targets GNU C2y directly (`qpng::qpng` and `qpng.pc` propagate
+`-std=gnu2y`): no C++ / pre-C23 shims, `[[gnu::visibility("default")]]`,
+`constexpr` constants, `bool`, `uint8_t` byte buffers instead of `void *`, and
+length-first array parameters. `qpng_status` is `enum [[nodiscard]]` (no
+enum-base: GCC 16 rejects `enum [[nodiscard]] : base`), covering every
+status-returning function once; pure queries (`qpng_status_string`,
+`qpng_backend_available`) are unmarked.
 
 ## Warnings
 
@@ -65,7 +87,9 @@ Before adding a helper, look in `src/internal.h` / `src/common.c`:
 | need | helper |
 |---|---|
 | signature | `QPNG__SIG` |
-| IHDR parse (+ decode limits) / payload | `qpng__parse_ihdr` / `qpng__put_ihdr` |
+| IHDR parse (+ decode limits) / payload / channels | `qpng__parse_ihdr` / `qpng__put_ihdr` / `qpng__channels` |
+| PLTE + tRNS header rules / CLI carry-over | `qpng__plte_trns_ok` / `qpng_tool_carry_plte_trns` (`tools/util.h`) |
+| row byte width (overflow-checked) | `qpng__row_bytes` |
 | chunk in a sized buffer / growable buffer | `qpng__put_chunk` (length-first, `zero_crc` flag) / `qpng__wbuf` (`qpng__wb_*`) |
 | zlib CMF/FLG check | `qpng__zlib_hdr_ok` |
 | libdeflate decompressor cleanup | `qpng__free_decompressorp` |

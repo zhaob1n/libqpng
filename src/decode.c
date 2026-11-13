@@ -12,27 +12,27 @@ constexpr size_t WIN_MARGIN = 32768 + 256;
 constexpr size_t PROGRESS_STEP = 64u << 10;
 
 typedef struct {
-    uint8_t *out; size_t off, stride, rs; uint32_t H, y; int bpp; int err; int pair_ok, quad_ok;
+    uint8_t *out; size_t off, stride, rs; uint32_t H, y; int bpp; int err; bool pair_ok, quad_ok;
     const uint8_t *prev;
-    int verify_adler; uint32_t adler; size_t apos;   /* Adler-32 over the filtered bytes, before they are overwritten */
+    bool verify_adler; uint32_t adler; size_t apos;   /* Adler-32 over the filtered bytes, before they are overwritten */
     uint32_t xy;                   /* rows already transformed */
     uint8_t *dst; size_t ostride;  /* separate output (palette / gray / tRNS expansion) */
     qpng_xform x;
 } qpng_dec;
 
 /* apply the output transform to unfiltered rows [c->xy, upto) */
-static void xform_rows(qpng_dec *c, uint32_t upto) {
+static void xform_rows(qpng_dec c[static 1], uint32_t upto) {
     for (uint32_t y = c->xy; y < upto; y++) {
         uint8_t *row = c->out + (size_t)y * c->stride;
-        if (c->x.xf == XF_SWAP16) qpng__swap16(row, c->stride);
-        else qpng__xform_row(&c->x, row, c->dst + (size_t)y * c->ostride, c->x.W);
+        if (c->x.xf == XF_SWAP16) qpng__swap16(c->stride, row);
+        else qpng__xform_row(&c->x, c->x.W, row, c->dst + (size_t)y * c->ostride);
     }
     if (upto > c->xy) c->xy = upto;
 }
 
 /* Unfilter every row whose raw bytes are complete and no longer needed by the inflater. pos = bytes of `out`
  * written by the inflater so far; final = inflate finished. */
-static void process_rows(qpng_dec *c, size_t pos, int final) {
+static void process_rows(qpng_dec c[static 1], size_t pos, bool final) {
     const size_t stride = c->stride, rs = c->rs; const int bpp = c->bpp;
     size_t dec = pos > c->off ? pos - c->off : 0;
     size_t ylim = dec / rs; if (ylim > c->H) ylim = c->H;
@@ -53,7 +53,7 @@ static void process_rows(qpng_dec *c, size_t pos, int final) {
                     if (f1 > 4 || f2 > 4 || f3 > 4) { c->err = QPNG_ERR_FILTER; c->y = c->H; return; }
                     if (f == 4 && f1 == 4 && f2 == 4 && f3 == 4) {
 #if QPNG_X86
-                        qpng__quad_paeth_avx2(dst, src, prev, stride, rs, stride, (size_t)bpp); prev = dst + 3 * stride; y += 4; continue;
+                        qpng__quad_paeth_avx2(stride, rs, stride, (size_t)bpp, dst, src, prev); prev = dst + 3 * stride; y += 4; continue;
 #endif
                     }
                 } else if (!final) break;
@@ -63,8 +63,8 @@ static void process_rows(qpng_dec *c, size_t pos, int final) {
                 if (y + 1 >= ylim) { if (!final) break; }      /* keep the pair together: wait for row y+1 */
                 else if (src[stride] <= 4) pair = qpng__pair_for_bpp(f, src[stride], bpp);
             }
-            if (pair) { pair(dst, src, prev, dst + stride, src + stride + 1, stride, (size_t)bpp); prev = dst + stride; y += 2; continue; }
-            qpng__unfilter_row(f, dst, src, prev, stride, bpp);
+            if (pair) { pair(stride, (size_t)bpp, dst, src, prev, dst + stride, src + stride + 1); prev = dst + stride; y += 2; continue; }
+            qpng__unfilter_row(f, stride, bpp, dst, src, prev);
             prev = dst; y++;
         }
         c->y = y; c->prev = prev;
@@ -72,30 +72,17 @@ static void process_rows(qpng_dec *c, size_t pos, int final) {
     /* swap16 runs one row behind: the row above is still the unfilter predecessor */
     if (c->x.xf != XF_NONE) xform_rows(c, final ? c->y : (c->x.xf == XF_SWAP16 ? (c->y ? c->y - 1 : 0) : c->y));
 }
-static void on_progress(void *ctx, const unsigned char *out_next) { qpng_dec *c = ctx; process_rows(c, (size_t)(out_next - c->out), 0); }
+static void on_progress(void *ctx, const unsigned char *out_next) { qpng_dec *c = ctx; process_rows(c, (size_t)(out_next - c->out), false); }
 
 constexpr uint8_t A7[7][4] = { {0,0,8,8}, {4,0,8,8}, {0,4,4,8}, {2,0,4,4}, {0,2,2,4}, {1,0,2,2}, {0,1,1,2} };  /* x0,y0,dx,dy */
 
-void qpng_decode_options_init(qpng_decode_options *o) {
-    *o = (qpng_decode_options){ .output = QPNG_OUTPUT_RAW, .verify_crc = 1 };
-}
-
-/* channels of a valid (color type, depth) pair, else 0 */
-static int ihdr_channels(int color, int depth) {
-    const bool sub8 = depth == 1 || depth == 2 || depth == 4;
-    switch (color) {
-    case 0: return depth == 8 || depth == 16 || sub8;
-    case 3: return depth == 8 || sub8;
-    case 2: return depth == 8 || depth == 16 ? 3 : 0;
-    case 4: return depth == 8 || depth == 16 ? 2 : 0;
-    case 6: return depth == 8 || depth == 16 ? 4 : 0;
-    default: return 0;
-    }
+void qpng_decode_options_init(qpng_decode_options o[static 1]) {
+    *o = (qpng_decode_options){ .output = QPNG_OUTPUT_RAW, .verify_crc = true };
 }
 
 qpng_status qpng__parse_ihdr(const uint8_t ih[static 13], const qpng_decode_options *o, qpng_info info[static 1]) {
     const uint32_t W = be32(ih), H = be32(ih + 4);
-    const int ch = ihdr_channels(ih[9], ih[8]);
+    const int ch = qpng__channels(ih[9], ih[8]);
     if (!W || !H || W > 0x7FFFFFFFu || H > 0x7FFFFFFFu || ih[10] || ih[11] || ih[12] > 1 || !ch) return QPNG_ERR_HEADER;
     if (o && (W > (o->max_width ? o->max_width : 1u << 24) || H > (o->max_height ? o->max_height : 1u << 24)))
         return QPNG_ERR_LIMITS;
@@ -105,19 +92,18 @@ qpng_status qpng__parse_ihdr(const uint8_t ih[static 13], const qpng_decode_opti
 }
 
 /* signature + IHDR framing + fields */
-static qpng_status read_ihdr(const uint8_t *buf, size_t n, const qpng_decode_options *o, qpng_info info[static 1]) {
+static qpng_status read_ihdr(size_t n, const uint8_t buf[static n], const qpng_decode_options *o, qpng_info info[static 1]) {
     if (n < 8 + 25 || memcmp(buf, QPNG__SIG, sizeof QPNG__SIG)) return QPNG_ERR_SIGNATURE;
     if (be32(buf + 8) != 13 || memcmp(buf + 12, "IHDR", 4)) return QPNG_ERR_HEADER;
     return qpng__parse_ihdr(buf + 16, o, info);
 }
 
-qpng_status qpng_read_info(const void *png, size_t n, qpng_info *info) {
-    const uint8_t *buf = png;
+qpng_status qpng_read_info(size_t n, const uint8_t png[n], qpng_info *info) {
     if (!png || !info) return QPNG_ERR_ARGUMENT;
     *info = (qpng_info){};
-    const qpng_status s = read_ihdr(buf, n, nullptr, info);
+    const qpng_status s = read_ihdr(n, png, nullptr, info);
     if (s) return s;
-    for (const uint8_t *p = buf + 33, *end = buf + n; p + 12 <= end;) {
+    for (const uint8_t *p = png + 33, *end = png + n; p + 12 <= end;) {
         uint32_t len = be32(p);
         if (len > (size_t)(end - p) - 12) break;
         if (!memcmp(p + 4, "PLTE", 4)) info->palette_entries = (uint16_t)(len / 3);
@@ -131,8 +117,8 @@ qpng_status qpng_read_info(const void *png, size_t n, qpng_info *info) {
 /* Adam7: unfilter each pass row into a 2-row ping-pong buffer (rb), transform to output pixels, scatter into ob.
  * Kept out of qpng_decode: the short pass rows make per-row overhead visible, and the caller's cleanup-owned
  * locals cost registers across the per-row calls (-5..15% on interlaced 8-bit gray / palette). */
-static qpng_status adam7(const qpng_xform *x, const uint8_t *raw, uint8_t *ob, uint8_t *rb, uint32_t W, uint32_t H,
-                         int bits, int bpp, size_t stride, size_t ostride, int obits) {
+static qpng_status adam7(const qpng_xform x[static 1], const uint8_t *raw, uint8_t *ob, uint8_t *rb, uint32_t W,
+                         uint32_t H, int bits, int bpp, size_t stride, size_t ostride, int obits) {
     const int opx = obits >= 8 ? obits / 8 : 0;
     uint8_t *rows[2] = { rb, rb + stride + 32 }, *trow = rb + 2 * (stride + 32);
     const uint8_t *q = raw;
@@ -145,11 +131,11 @@ static qpng_status adam7(const qpng_xform *x, const uint8_t *raw, uint8_t *ob, u
         for (uint32_t j = 0; j < ph; j++, q += pst + 1) {
             int f = q[0]; if (f > 4) return QPNG_ERR_FILTER;
             uint8_t *cur = rows[j & 1];
-            qpng__unfilter_row(f, cur, q + 1, prev, pst, bpp);
+            qpng__unfilter_row(f, pst, bpp, cur, q + 1, prev);
             prev = cur;
             const uint8_t *px = cur;
-            if (x->xf == XF_SWAP16) { memcpy(trow, cur, pst); qpng__swap16(trow, pst); px = trow; }
-            else if (x->xf != XF_NONE) { qpng__xform_row(x, cur, trow, pw); px = trow; }
+            if (x->xf == XF_SWAP16) { memcpy(trow, cur, pst); qpng__swap16(pst, trow); px = trow; }
+            else if (x->xf != XF_NONE) { qpng__xform_row(x, pw, cur, trow); px = trow; }
             uint8_t *orow = ob + (size_t)(y0 + j * dy) * ostride;
             if (opx) {
 #define SC(N) for (uint32_t i = 0; i < pw; i++) memcpy(orow + (size_t)(x0 + i * dx) * N, px + (size_t)i * N, N); break;
@@ -166,8 +152,7 @@ static qpng_status adam7(const qpng_xform *x, const uint8_t *raw, uint8_t *ob, u
     return QPNG_OK;
 }
 
-qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *opts, qpng_image *im) {
-    const uint8_t *buf = png;
+qpng_status qpng_decode(size_t n, const uint8_t png[n], const qpng_decode_options *opts, qpng_image *im) {
     qpng_decode_options defo;
     if (!im) return QPNG_ERR_ARGUMENT;
     *im = (qpng_image){};
@@ -178,18 +163,19 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     const uint64_t maxout = opts->max_output_bytes ? opts->max_output_bytes : (1ull << 30);
 
     qpng_info in;
-    const qpng_status hs = read_ihdr(buf, n, opts, &in);
+    const qpng_status hs = read_ihdr(n, png, opts, &in);
     if (hs) return hs;
-    if (opts->verify_crc && libdeflate_crc32(0, buf + 12, 17) != be32(buf + 29)) return QPNG_ERR_CRC;
+    if (opts->verify_crc && libdeflate_crc32(0, png + 12, 17) != be32(png + 29)) return QPNG_ERR_CRC;
     const uint32_t W = in.width, H = in.height;
     const int depth = in.bit_depth, color = in.color_type, interlace = in.interlaced, ich = in.channels;
     const int bits = ich * depth, bpp = bits >= 8 ? bits / 8 : 1;
-    const size_t stride = ((size_t)W * (size_t)bits + 7) / 8;
+    size_t stride;
+    if (qpng__row_bytes(&stride, W, bits)) return QPNG_ERR_LIMITS;
 
     /* pass 1: chunk layout (rules as in the png crate: PLTE/tRNS before IDAT, no duplicates, no unknown critical
      * chunks); ancillary chunks (gAMA, sRGB, iCCP, text, APNG acTL/fcTL/fdAT, ...) are skipped. */
-    const uint8_t *p = buf + 8, *end = buf + n, *z1 = nullptr, *plte = nullptr, *trns = nullptr;
-    size_t ztot = 0; uint32_t plen = 0, tlen = 0; int nidat = 0, idat_done = 0;
+    const uint8_t *p = png + 8, *end = png + n, *z1 = nullptr, *plte = nullptr, *trns = nullptr;
+    size_t ztot = 0; uint32_t plen = 0, tlen = 0; int nidat = 0; bool idat_done = false;
     while (p + 12 <= end) {
         uint32_t len = be32(p);
         if (len > (size_t)(end - p) - 12) return QPNG_ERR_CHUNK;
@@ -199,42 +185,43 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
             if (!nidat) z1 = p + 8;
             nidat++; ztot += len;
         } else {
-            if (nidat) idat_done = 1;
+            if (nidat) idat_done = true;
             if (!memcmp(t, "IEND", 4)) break;
             else if (!memcmp(t, "PLTE", 4)) { if (plte || nidat || len % 3 || len > 768 || !len) return QPNG_ERR_CHUNK; plte = p + 8; plen = len / 3; }
             else if (!memcmp(t, "tRNS", 4)) { if (trns || nidat) return QPNG_ERR_CHUNK; trns = p + 8; tlen = len; }
-            else if (!memcmp(t, "IHDR", 4)) { if (p != buf + 8) return QPNG_ERR_CHUNK; }
+            else if (!memcmp(t, "IHDR", 4)) { if (p != png + 8) return QPNG_ERR_CHUNK; }
             else if (!(t[0] & 0x20)) return QPNG_ERR_CHUNK;   /* unknown critical chunk */
         }
         p += 12 + len;
     }
     if (!nidat || ztot < 2) return QPNG_ERR_CHUNK;
-    if (color == 3 && !plte) return QPNG_ERR_CHUNK;
-    if (trns) {
-        if (color == 4 || color == 6) return QPNG_ERR_CHUNK;
-        if (color == 0 && tlen < 2) return QPNG_ERR_CHUNK;
-        if (color == 2 && tlen < 6) return QPNG_ERR_CHUNK;
-    }
+    if (!qpng__plte_trns_ok(color, plte != nullptr, trns != nullptr, tlen)) return QPNG_ERR_CHUNK;
 
     qpng_dec c = {};
     int och, odepth, ocolor;
-    qpng__xform_setup(&c.x, color, depth, ich, W, opts->output, plte, plen, trns, tlen, &och, &odepth, &ocolor);
-    const size_t ostride = ((size_t)W * (size_t)och * (size_t)odepth + 7) / 8;
+    qpng__xform_setup(&c.x, color, depth, ich, W, opts->output, plen, plte, tlen, trns, &och, &odepth, &ocolor);
+    size_t ostride;
+    if (qpng__row_bytes(&ostride, W, och * odepth)) return QPNG_ERR_LIMITS;
     c.ostride = ostride;
     /* raw (filtered) size */
-    size_t rawn = 0, rs = stride + 1;
+    size_t rawn = 0, rs;
+    if (qpng__add_size(&rs, stride, 1)) return QPNG_ERR_LIMITS;
     if (!interlace) {
         if (qpng__mul_size(&rawn, H, rs)) return QPNG_ERR_LIMITS;
     } else for (int ps = 0; ps < 7; ps++) {
         if (W <= A7[ps][0] || H <= A7[ps][1]) continue;
         size_t pw = (W - A7[ps][0] + A7[ps][2] - 1) / A7[ps][2], ph = (H - A7[ps][1] + A7[ps][3] - 1) / A7[ps][3];
-        size_t prow = 1 + (pw * (size_t)bits + 7) / 8, add;
-        if (qpng__mul_size(&add, ph, prow) || qpng__add_size(&rawn, rawn, add)) return QPNG_ERR_LIMITS;
+        size_t pbytes, prow, add;
+        if (qpng__row_bytes(&pbytes, (uint32_t)pw, bits) || qpng__add_size(&prow, pbytes, 1) ||
+            qpng__mul_size(&add, ph, prow) || qpng__add_size(&rawn, rawn, add))
+            return QPNG_ERR_LIMITS;
     }
-    const size_t off = interlace ? 0 : 4 * stride;   /* raw rows sit >= 4 output rows ahead (in-place 4-row kernel) */
-    size_t out_bytes, need;
+    size_t off = 0, out_bytes, need;
+    if (!interlace && qpng__mul_size(&off, stride, 4)) return QPNG_ERR_LIMITS;   /* raw rows >= 4 output rows ahead */
     if (qpng__mul_size(&out_bytes, ostride, H) || out_bytes > maxout) return QPNG_ERR_LIMITS;
-    if (qpng__add_size(&need, rawn, off) || (uint64_t)need > maxout + (maxout >> 2) + (1u << 20)) return QPNG_ERR_LIMITS;
+    uint64_t need_lim;
+    if (ckd_add(&need_lim, maxout, maxout >> 2) || ckd_add(&need_lim, need_lim, 1u << 20)) need_lim = UINT64_MAX;
+    if (qpng__add_size(&need, rawn, off) || (uint64_t)need > need_lim) return QPNG_ERR_LIMITS;
 
     /* Owned buffers: early return frees them; success takes out/obuf into im->pixels. */
     qpng_owned zbuf = { .A = A, .p = nullptr };
@@ -248,8 +235,8 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     if (nidat > 1) { zbuf.p = qpng__alloc(A, ztot); if (!zbuf.p) return QPNG_ERR_NOMEM; }
     if (opts->verify_crc || zbuf.p) {
         uint8_t *zo = zbuf.p;
-        for (p = buf + 8; p + 12 <= end; p += 12 + be32(p)) {
-            uint32_t len = be32(p); int idat = !memcmp(p + 4, "IDAT", 4);
+        for (p = png + 8; p + 12 <= end; p += 12 + be32(p)) {
+            uint32_t len = be32(p); bool idat = !memcmp(p + 4, "IDAT", 4);
             if (opts->verify_crc && libdeflate_crc32(0, p + 4, len + 4) != be32(p + 8 + len)) return QPNG_ERR_CRC;
             if (idat && zbuf.p) { memcpy(zo, p + 8, len); zo += len; }
             if (!memcmp(p + 4, "IEND", 4)) break;
@@ -262,7 +249,7 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     if (qpng__add_size(&raw_span, off, rawn) || qpng__add_size(&out_cap, raw_span, 64)) return QPNG_ERR_LIMITS;
     out.p = qpng__alloc(A, out_cap);
     if (!out.p) return QPNG_ERR_NOMEM;
-    const int sep = interlace || (c.x.xf != XF_NONE && c.x.xf != XF_SWAP16);   /* output != unfiltered rows */
+    const bool sep = interlace || (c.x.xf != XF_NONE && c.x.xf != XF_SWAP16);   /* output != unfiltered rows */
     if (sep) {
         size_t obuf_cap;
         if (qpng__add_size(&obuf_cap, out_bytes, 16)) return QPNG_ERR_LIMITS;
@@ -284,7 +271,7 @@ qpng_status qpng_decode(const void *png, size_t n, const qpng_decode_options *op
     if (r != LIBDEFLATE_SUCCESS || aout != rawn) return QPNG_ERR_DEFLATE;
     if (opts->verify_adler && ain + 6 > ztot) return QPNG_ERR_ADLER;   /* no room for the Adler-32 trailer */
     if (!interlace) {
-        process_rows(&c, off + rawn, 1);
+        process_rows(&c, off + rawn, true);
         if (c.err) return (qpng_status)c.err;
         if (opts->verify_adler && c.adler != be32(z + 2 + ain)) return QPNG_ERR_ADLER;
     } else {

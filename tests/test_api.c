@@ -7,8 +7,7 @@ static void *my_alloc(void *u, size_t n) { (void)u; live++; total_allocs++; retu
 static void my_free(void *u, void *p) { (void)u; live--; free(p); }
 
 static int writes;
-static int count_write(void *u, const uint8_t *d, size_t n) { (void)u; (void)d; (void)n; writes++; return 0; }
-
+static int count_write([[maybe_unused]] void *u, size_t n, [[maybe_unused]] const uint8_t d[static n]) { writes++; return 0; }
 /* One-shot and streaming encoders must agree on an option: same status, and a rejected stream writes nothing. */
 static qpng_status both(const uint8_t *px, const qpng_encode_options *e) {
     uint8_t *png = nullptr; size_t pn = 0;
@@ -37,22 +36,25 @@ int main(void) {
     CHECK(qpng_encode(px, 3, 2, 0, QPNG_COLOR_RGB, 8, &eo, &png, &pn) == QPNG_OK);
     CHECK(live == 1);
     qpng_info info = {};
-    CHECK(qpng_read_info(png, pn, &info) == QPNG_OK);
+    CHECK(qpng_read_info(pn, png, &info) == QPNG_OK);
     CHECK(info.width == 3 && info.height == 2 && info.bit_depth == 8 && info.color_type == QPNG_COLOR_RGB && info.channels == 3);
     qpng_decode_options dopt = {};
     qpng_decode_options_init(&dopt);
     dopt.allocator = &al;
-    dopt.verify_adler = 1;
+    dopt.verify_adler = true;
     qpng_image im = {};
-    CHECK(qpng_decode(png, pn, &dopt, &im) == QPNG_OK);
+    CHECK(qpng_decode(pn, png, &dopt, &im) == QPNG_OK);
     CHECK(im.size == 18 && !memcmp(im.pixels, px, 18));
     qpng_image_free(&im);
-    /* limits */
+    /* limits + UINT64_MAX saturation */
     dopt.max_width = 2;
-    CHECK(qpng_decode(png, pn, &dopt, &im) == QPNG_ERR_LIMITS);
+    CHECK(qpng_decode(pn, png, &dopt, &im) == QPNG_ERR_LIMITS);
     dopt.max_width = 0;
     dopt.max_output_bytes = 10;
-    CHECK(qpng_decode(png, pn, &dopt, &im) == QPNG_ERR_LIMITS);
+    CHECK(qpng_decode(pn, png, &dopt, &im) == QPNG_ERR_LIMITS);
+    dopt.max_output_bytes = UINT64_MAX;
+    CHECK(qpng_decode(pn, png, &dopt, &im) == QPNG_OK);
+    qpng_image_free(&im);
     dopt.max_output_bytes = 0;
     CHECK(im.pixels == nullptr);
     /* corruption: CRC, signature, truncation */
@@ -60,20 +62,20 @@ int main(void) {
     CHECK(bad != nullptr);
     memcpy(bad, png, pn);
     bad[pn - 20] ^= 1;
-    CHECK(qpng_decode(bad, pn, nullptr, &im) == QPNG_ERR_CRC);
-    dopt.verify_crc = 0;
+    CHECK(qpng_decode(pn, bad, nullptr, &im) == QPNG_ERR_CRC);
+    dopt.verify_crc = false;
     {
-        qpng_status s = qpng_decode(bad, pn, &dopt, &im);
+        qpng_status s = qpng_decode(pn, bad, &dopt, &im);
         CHECK(s != QPNG_OK || im.pixels);
         qpng_image_free(&im);
     }
-    dopt.verify_crc = 1;
+    dopt.verify_crc = true;
     memcpy(bad, png, pn);
     bad[0] = 0;
-    CHECK(qpng_decode(bad, pn, nullptr, &im) == QPNG_ERR_SIGNATURE);
+    CHECK(qpng_decode(pn, bad, nullptr, &im) == QPNG_ERR_SIGNATURE);
     /* any truncation inside the image data must fail (a missing IEND is tolerated, as in the png crate) */
     for (size_t cut = 0; cut < pn - 12; cut++) {
-        qpng_status s = qpng_decode(png, cut, nullptr, &im);
+        qpng_status s = qpng_decode(cut, png, nullptr, &im);
         CHECK(s != QPNG_OK);
     }
     CHECK(live == 1);   /* only the encoded PNG is still allocated: no leaks on error paths */
@@ -84,7 +86,9 @@ int main(void) {
     CHECK(qpng_encode(px, 3, 2, 0, QPNG_COLOR_PALETTE, 8, nullptr, &png, &pn) == QPNG_ERR_ARGUMENT);   /* no palette */
     CHECK(qpng_encode(px, 0, 2, 0, QPNG_COLOR_RGB, 8, nullptr, &png, &pn) == QPNG_ERR_ARGUMENT);
     CHECK(qpng_encode(px, 3, 2, 5, QPNG_COLOR_RGB, 8, nullptr, &png, &pn) == QPNG_ERR_ARGUMENT);       /* stride < row */
-    CHECK(qpng_decode(nullptr, 0, nullptr, &im) == QPNG_ERR_ARGUMENT);
+    /* 64-bit multiplication wrap regression: valid PNG dimensions whose h * (rowbytes + 1) wraps 2^64 */
+    CHECK(qpng_encode(px, 0x55555555u, 0x60000000u, 0, QPNG_COLOR_RGBA, 16, nullptr, &png, &pn) == QPNG_ERR_LIMITS);
+    CHECK(qpng_decode(0, nullptr, nullptr, &im) == QPNG_ERR_ARGUMENT);
     {   /* deflate backend options */
         qpng_encode_options e = {};
         qpng_encode_options_init(&e);
@@ -146,7 +150,7 @@ int main(void) {
         qpng_encode_options_init(&o2);
         o2.preset = (qpng_preset)p;
         CHECK(qpng_encode(padded, 3, 2, 32, QPNG_COLOR_RGB, 8, &o2, &png, &pn) == QPNG_OK);
-        CHECK(qpng_decode(png, pn, nullptr, &im) == QPNG_OK && im.size == 18 && !memcmp(im.pixels, px, 18));
+        CHECK(qpng_decode(pn, png, nullptr, &im) == QPNG_OK && im.size == 18 && !memcmp(im.pixels, px, 18));
         qpng_image_free(&im);
         qpng_buffer_free(png, nullptr);
     }

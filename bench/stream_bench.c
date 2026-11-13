@@ -8,20 +8,18 @@
 static double now(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
-    return t.tv_sec * 1e9 + t.tv_nsec;
+    return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
 }
 static int cmpd(const void *a, const void *b) {
     double x = *(const double *)a, y = *(const double *)b;
     return (x > y) - (x < y);
 }
-static int on_row(void *u, uint32_t y, const uint8_t *r, size_t n) {
-    (void)y;
+static int on_row(void *u, [[maybe_unused]] uint32_t y, size_t n, const uint8_t r[static n]) {
     *(volatile uint8_t *)u ^= r[n - 1];
     return 0;
 }
 typedef struct { size_t n; } cnt_t;
-static int wr(void *u, const uint8_t *d, size_t n) {
-    (void)d;
+static int wr(void *u, size_t n, [[maybe_unused]] const uint8_t d[static n]) {
     ((cnt_t *)u)->n += n;
     return 0;
 }
@@ -36,7 +34,7 @@ int main(int argc, char **argv) {
         qpng_tool_autofree uint8_t *b = qpng_tool_slurp(argv[i], &n);
         if (!b) continue;
         qpng_image src = {};
-        if (qpng_decode(b, n, nullptr, &src)) continue;
+        if (qpng_decode(n, b, nullptr, &src)) continue;
         volatile uint8_t sink = 0;
         for (int mode = 0; mode < 3; mode++) {
             for (int r = 0; r <= reps; r++) {
@@ -44,11 +42,11 @@ int main(int argc, char **argv) {
                 qpng_image im = {};
                 qpng_decoder *d = nullptr;
                 if (mode == 0) {
-                    (void)qpng_decode(b, n, nullptr, &im);
+                    (void)qpng_decode(n, b, nullptr, &im);
                     qpng_image_free(&im);
                 } else {
                     (void)qpng_decoder_new(nullptr, mode == 2 ? on_row : nullptr, (void *)&sink, &d);
-                    (void)qpng_decoder_push(d, b, n);
+                    (void)qpng_decoder_push(d, n, b);
                     (void)qpng_decoder_finish(d, mode == 1 ? &im : nullptr);
                     if (mode == 1) qpng_image_free(&im);
                     qpng_decoder_free(d);

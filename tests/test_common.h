@@ -4,7 +4,7 @@
 
 #include "../tools/util.h"
 
-uint64_t fnv1a(const uint8_t *d, size_t n);
+uint64_t fnv1a(size_t n, const uint8_t d[n]);
 
 #define slurp qpng_tool_slurp
 #define find_chunk qpng_tool_find_chunk

@@ -5,9 +5,9 @@
 #ifdef QPNG_TEST_ZLIB
 #include <zlib.h>
 /* the IDAT stream must also inflate with stock zlib, to h * (1 + rowbytes) bytes */
-static int zlib_ok(const uint8_t *png, size_t pn, const qpng_image *im) {
-    static const int ch[7] = { 1, 0, 3, 1, 2, 0, 4 };
-    const size_t raw = (size_t)im->height * (1 + ((size_t)im->width * ch[im->color_type] * im->bit_depth + 7) / 8);
+static bool zlib_ok(size_t pn, const uint8_t png[static pn], const qpng_image im[static 1]) {
+    static constexpr int ch[7] = { 1, 0, 3, 1, 2, 0, 4 };
+    const size_t raw = (size_t)im->height * (1 + ((size_t)im->width * (size_t)ch[im->color_type] * im->bit_depth + 7) / 8);
     z_stream s = {};
     qpng_tool_autofree uint8_t *out = malloc(raw + 1);
     int ok = out && inflateInit(&s) == Z_OK, r = Z_OK;
@@ -23,10 +23,11 @@ static int zlib_ok(const uint8_t *png, size_t pn, const qpng_image *im) {
     }
     ok = ok && r == Z_STREAM_END && s.total_out == raw;
     inflateEnd(&s);
-    return ok;
+    return ok != 0;
 }
 #else
-static int zlib_ok(const uint8_t *png, size_t pn, const qpng_image *im) { (void)png; (void)pn; (void)im; return 1; }
+static bool zlib_ok([[maybe_unused]] size_t pn, [[maybe_unused]] const uint8_t png[static pn],
+                    [[maybe_unused]] const qpng_image im[static 1]) { return true; }
 #endif
 
 int main(int argc, char **argv) {
@@ -36,15 +37,9 @@ int main(int argc, char **argv) {
         qpng_tool_autofree uint8_t *buf = slurp(argv[fi], &n);
         if (!buf) { fprintf(stderr, "missing %s\n", argv[fi]); fails++; continue; }
         qpng_image src = {};
-        if (qpng_decode(buf, n, nullptr, &src)) continue;   /* invalid inputs are skipped */
+        if (qpng_decode(n, buf, nullptr, &src)) continue;   /* invalid inputs are skipped */
         qpng_encode_options o = {}; qpng_encode_options_init(&o);
-        int pl = 0, tl = 0;
-        o.palette = find_chunk(buf, n, "PLTE", &pl); o.palette_entries = o.palette ? pl / 3 : 0;
-        o.trns = find_chunk(buf, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;
-        if (src.color_type != QPNG_COLOR_PALETTE) { o.palette = nullptr; o.palette_entries = 0; }   /* suggested PLTE (e.g. ps1n0g08) */
-        if (o.trns && ((src.color_type == QPNG_COLOR_GRAY && tl != 2) || (src.color_type == QPNG_COLOR_RGB && tl != 6) ||
-                       (src.color_type == QPNG_COLOR_PALETTE && tl > o.palette_entries) || src.color_type == QPNG_COLOR_RGBA ||
-                       src.color_type == QPNG_COLOR_GRAY_ALPHA)) { o.trns = nullptr; o.trns_bytes = 0; }
+        qpng_tool_carry_plte_trns(n, buf, src.color_type, &o);
         /* variants: 4 presets (AUTO backend), 6 fixed filters, 4 libdeflate levels, 4 presets forced to libdeflate,
          * then (if built) 4 presets forced to zlib-ng and 5 explicit zlib-ng level / strategy combinations */
         const int nv = 4 + 6 + 4 + 4 + (qpng_backend_available(QPNG_BACKEND_ZLIBNG) ? 4 + 5 : 0);
@@ -65,8 +60,8 @@ int main(int argc, char **argv) {
             qpng_status s = qpng_encode(src.pixels, src.width, src.height, src.stride, (qpng_color)src.color_type, src.bit_depth, &e, &png, &pn);
             runs++;
             if (s) { fprintf(stderr, "encode %s v%d: %s\n", argv[fi], v, qpng_status_string(s)); fails++; continue; }
-            if (!zlib_ok(png, pn, &src)) { fprintf(stderr, "ZLIB REJECTS %s variant %d\n", argv[fi], v); fails++; }
-            qpng_image back; s = qpng_decode(png, pn, nullptr, &back);
+            if (!zlib_ok(pn, png, &src)) { fprintf(stderr, "ZLIB REJECTS %s variant %d\n", argv[fi], v); fails++; }
+            qpng_image back; s = qpng_decode(pn, png, nullptr, &back);
             if (s || back.size != src.size || back.width != src.width || back.color_type != src.color_type ||
                 back.bit_depth != src.bit_depth || memcmp(back.pixels, src.pixels, src.size)) {
                 fprintf(stderr, "ROUNDTRIP MISMATCH %s variant %d (%s)\n", argv[fi], v, s ? qpng_status_string(s) : "pixels"); fails++;

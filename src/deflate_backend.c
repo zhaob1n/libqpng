@@ -36,7 +36,7 @@ size_t qpng__zbound(size_t n) {
 static void ld_releasep(struct libdeflate_compressor **z) { libdeflate_free_compressor(*z); *z = nullptr; }
 #define ld_owned QPNG_CLEANUP(ld_releasep) struct libdeflate_compressor
 
-[[nodiscard]] static struct libdeflate_compressor *ld_make(const qpng_zcfg *c) {
+[[nodiscard]] static struct libdeflate_compressor *ld_make(const qpng_zcfg c[static 1]) {
     if (c->level < QPNG_DEFLATE_QPNG) {
         struct libdeflate_compressor *z = libdeflate_alloc_compressor(c->level);
         if (z && (c->depth || c->nice)) libdeflate_set_search_params(z, (unsigned)c->depth, (unsigned)c->nice);
@@ -50,7 +50,8 @@ static void ld_releasep(struct libdeflate_compressor **z) { libdeflate_free_comp
     return z;
 }
 
-[[nodiscard]] static size_t ld_compress(const qpng_zcfg *c, const uint8_t *src, size_t n, uint8_t *dst, size_t cap, qpng_status *st) {
+[[nodiscard]] static size_t ld_compress(const qpng_zcfg c[static 1], size_t n, const uint8_t src[n], size_t cap,
+                                        uint8_t dst[static cap], qpng_status st[static 1]) {
     ld_owned *z = ld_make(c);
     if (!z) { *st = QPNG_ERR_NOMEM; return 0; }
     const size_t zn = libdeflate_zlib_compress(z, src, n, dst, cap);
@@ -72,14 +73,15 @@ static zng_stream zng_on(const qpng_allocator *A) {
     return (zng_stream){ .zalloc = zng_alloc_cb, .zfree = zng_free_cb, .opaque = (void *)A };
 }
 /* window 32 KiB, memLevel 9 (128 KiB hash / symbol buffer: measured smaller on graphics than 8 at equal speed) */
-[[nodiscard]] static bool zng_deflate_init(zng_stream *s, const qpng_zcfg *c) {
+[[nodiscard]] static bool zng_deflate_init(zng_stream s[static 1], const qpng_zcfg c[static 1]) {
     return zng_deflateInit2(s, c->level, Z_DEFLATED, 15, 9, c->strategy) == Z_OK;
 }
 /* owner of an initialised deflate stream: declared only after init succeeded */
 static void zng_deflate_endp(zng_stream **s) { if (*s) zng_deflateEnd(*s); *s = nullptr; }
 
-[[nodiscard]] static size_t zng_compress_all(const qpng_zcfg *c, const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
-                               const qpng_allocator *A, qpng_status *st) {
+[[nodiscard]] static size_t zng_compress_all(const qpng_zcfg c[static 1], size_t n, const uint8_t src[n],
+                                             size_t cap, uint8_t dst[static cap], const qpng_allocator *A,
+                                             qpng_status st[static 1]) {
     zng_stream s = zng_on(A);
     if (!zng_deflate_init(&s, c)) { *st = QPNG_ERR_NOMEM; return 0; }
     QPNG_CLEANUP(zng_deflate_endp) zng_stream *live [[maybe_unused]] = &s;
@@ -106,12 +108,12 @@ static void zng_deflate_endp(zng_stream **s) { if (*s) zng_deflateEnd(*s); *s = 
 }
 #endif
 
-size_t qpng__zcompress(const qpng_zcfg c[static 1], const uint8_t *src, size_t n, uint8_t *dst, size_t cap,
-                       [[maybe_unused]] const qpng_allocator *A, qpng_status st[static 1]) {
+size_t qpng__zcompress(const qpng_zcfg c[static 1], size_t n, const uint8_t src[n], size_t cap,
+                       uint8_t dst[static cap], [[maybe_unused]] const qpng_allocator *A, qpng_status st[static 1]) {
 #ifdef QPNG_HAVE_ZLIBNG
-    if (c->backend == QPNG_BACKEND_ZLIBNG) return zng_compress_all(c, src, n, dst, cap, A, st);
+    if (c->backend == QPNG_BACKEND_ZLIBNG) return zng_compress_all(c, n, src, cap, dst, A, st);
 #endif
-    return ld_compress(c, src, n, dst, cap, st);
+    return ld_compress(c, n, src, cap, dst, st);
 }
 
 /*
@@ -122,7 +124,7 @@ constexpr size_t ULTRA_CHUNK = 65536;
 constexpr size_t ULTRA_CHUNK_BIG = 262144;
 constexpr size_t ULTRA_MIN_TAIL = 4096;
 size_t qpng__zcompress_ultra_rows(const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int filter,
-                                  bool hybrid, uint8_t *dst, size_t cap, const qpng_allocator *A,
+                                  bool hybrid, size_t cap, uint8_t dst[static cap], const qpng_allocator *A,
                                   qpng_status st[static 1]) {
     const size_t row = n + 1;
     const size_t max_rows = (ULTRA_CHUNK_BIG + ULTRA_MIN_TAIL) / row + 2;
@@ -140,7 +142,7 @@ size_t qpng__zcompress_ultra_rows(const uint8_t *px, size_t stride, uint32_t h, 
         if (k > h - y) k = h - y;
         if ((size_t)(h - y - k) * row < ULTRA_MIN_TAIL && (size_t)(h - y) <= max_rows) k = h - y;   /* no tiny tail */
         const size_t len = (size_t)k * row;
-        qpng__filter_rows(buf + 1, px, stride, y, y + k, n, bpp, hybrid && target == ULTRA_CHUNK_BIG ? QPNG_FILTER_UP : filter);
+        qpng__filter_rows(y, y + k, n, buf + 1, px, stride, bpp, hybrid && target == ULTRA_CHUNK_BIG ? QPNG_FILTER_UP : filter);
         adler = libdeflate_adler32(adler, buf + 1, len);
         y += k;
         size_t o = libdeflate_png_ultra_compress_chunk(c, &us, buf + 1, len, y == h, dst + zn, cap - zn - 4);
@@ -195,7 +197,7 @@ qpng_zstream *qpng__zstream_new(const qpng_zcfg c[static 1], const qpng_allocato
     return QPNG_TAKE(z);
 }
 
-qpng_status qpng__zstream_write(qpng_zstream *z, const uint8_t *in, size_t n, bool final) {
+qpng_status qpng__zstream_write(qpng_zstream *z, size_t n, const uint8_t *in, bool final) {
     if (z->ld) {
         if (n > QPNG_ZSTREAM_MAX_CHUNK) return QPNG_ERR_ENCODE;
         size_t o = 0;
@@ -205,7 +207,7 @@ qpng_status qpng__zstream_write(qpng_zstream *z, const uint8_t *in, size_t n, bo
         if (!k && (n || final)) return QPNG_ERR_ENCODE;
         o += k;
         if (final) { wbe32(z->obuf + o, z->adler); o += 4; }
-        return o ? z->sink(z->ctx, z->obuf, o) : QPNG_OK;
+        return o ? z->sink(z->ctx, o, z->obuf) : QPNG_OK;
     }
 #ifdef QPNG_HAVE_ZLIBNG
     qpng_status st = QPNG_OK;
@@ -219,7 +221,7 @@ qpng_status qpng__zstream_write(qpng_zstream *z, const uint8_t *in, size_t n, bo
         if (r != Z_OK && r != Z_STREAM_END && r != Z_BUF_ERROR) return QPNG_ERR_ENCODE;
         done += ci - z->zs.avail_in;
         const size_t made = z->ocap - z->zs.avail_out;
-        if (made && (st = z->sink(z->ctx, z->obuf, made)) != QPNG_OK) return st;
+        if (made && (st = z->sink(z->ctx, made, z->obuf)) != QPNG_OK) return st;
         if (r == Z_STREAM_END) return QPNG_OK;
         if (done == n && !last && z->zs.avail_out) return QPNG_OK;   /* input consumed, nothing pending */
     }
@@ -249,8 +251,8 @@ qpng_zistream *qpng__zistream_new(const qpng_allocator *A) {
     if (zng_inflateInit2(&z->zs, -15) != Z_OK) return nullptr;   /* raw: zlib header/trailer are ours */
     return qpng__take(&o);
 }
-qpng_zrun qpng__zistream_run(qpng_zistream *z, const uint8_t *in, size_t n, size_t used[static 1], uint8_t *out,
-                             size_t cap, size_t made[static 1]) {
+qpng_zrun qpng__zistream_run(qpng_zistream *z, size_t n, const uint8_t in[static n], size_t used[static 1],
+                             size_t cap, uint8_t out[static cap], size_t made[static 1]) {
     const uint32_t ci = n < 0x40000000u ? (uint32_t)n : 0x40000000u, co = cap < 0x40000000u ? (uint32_t)cap : 0x40000000u;
     z->zs.next_in = in; z->zs.avail_in = ci; z->zs.next_out = out; z->zs.avail_out = co;
     const int r = zng_inflate(&z->zs, Z_NO_FLUSH);
@@ -266,9 +268,10 @@ void qpng__zistream_free(qpng_zistream *z) {
 }
 #else
 qpng_zistream *qpng__zistream_new([[maybe_unused]] const qpng_allocator *A) { return nullptr; }
-qpng_zrun qpng__zistream_run([[maybe_unused]] qpng_zistream *z, [[maybe_unused]] const uint8_t *in,
-                             [[maybe_unused]] size_t n, size_t used[static 1], [[maybe_unused]] uint8_t *out,
-                             [[maybe_unused]] size_t cap, size_t made[static 1]) {
+qpng_zrun qpng__zistream_run([[maybe_unused]] qpng_zistream *z, [[maybe_unused]] size_t n,
+                             [[maybe_unused]] const uint8_t in[static n], size_t used[static 1],
+                             [[maybe_unused]] size_t cap, [[maybe_unused]] uint8_t out[static cap],
+                             size_t made[static 1]) {
     *used = *made = 0;
     return QPNG_ZRUN_BAD;
 }

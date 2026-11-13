@@ -48,19 +48,21 @@ static inline int absres(int r) { int v = (int8_t)r; return v < 0 ? -v : v; }
 
 /* ---- portable scalar versions (same results) ---- */
 #if !QPNG_X86
-static void filt_row_scalar(int f, uint8_t *out, const uint8_t *cur, const uint8_t *prev, size_t n, int bpp) {
+static void filt_row_scalar(int f, size_t n, uint8_t out[static n], const uint8_t cur[static n],
+                            const uint8_t prev[static n], int bpp) {
     const size_t b = (size_t)bpp;
     size_t i = 0;
     if (f == 0) { memcpy(out, cur, n); return; }
     for (; i < b && i < n; i++) out[i] = (uint8_t)(cur[i] - qpng__pred(f, 0, prev[i], 0));
     for (; i < n; i++) out[i] = (uint8_t)(cur[i] - qpng__pred(f, cur[i - b], prev[i], prev[i - b]));
 }
-static void costs_scalar(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[static 5], int paeth) {
+static void costs_scalar(size_t n, const uint8_t cur[static n], const uint8_t prev[static n], int bpp,
+                         uint64_t cost[static 5], bool paeth) {
     const size_t b = (size_t)bpp;
     uint64_t s[5] = {};
     for (size_t i = 0; i < n; i++) {
         const int a = i >= b ? cur[i - b] : 0, c = i >= b ? prev[i - b] : 0;
-        for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, a, prev[i], c));
+        for (int f = 0; f < 4 + (int)paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, a, prev[i], c));
     }
     for (int f = 0; f < 5; f++) cost[f] = s[f];
     if (!paeth) cost[4] = UINT64_MAX;
@@ -69,7 +71,8 @@ static void costs_scalar(const uint8_t *cur, const uint8_t *prev, size_t n, int 
 
 #if QPNG_X86
 /* ---- write one filtered row ---- */
-static void filt_row_sse2(int f, uint8_t *out, const uint8_t *cur, const uint8_t *prev, size_t n, int bpp) {
+static void filt_row_sse2(int f, size_t n, uint8_t out[static n], const uint8_t cur[static n],
+                          const uint8_t prev[static n], int bpp) {
     const size_t b = (size_t)bpp;
     size_t i = 0;
     if (f == 0) { memcpy(out, cur, n); return; }
@@ -87,7 +90,8 @@ static void filt_row_sse2(int f, uint8_t *out, const uint8_t *cur, const uint8_t
     }
     for (; i < n; i++) out[i] = (uint8_t)(cur[i] - qpng__pred(f, cur[i - b], prev[i], prev[i - b]));
 }
-[[gnu::target("avx2")]] static void filt_row_avx2(int f, uint8_t *out, const uint8_t *cur, const uint8_t *prev, size_t n, int bpp) {
+[[gnu::target("avx2")]] static void filt_row_avx2(int f, size_t n, uint8_t out[static n], const uint8_t cur[static n],
+                                                  const uint8_t prev[static n], int bpp) {
     const size_t b = (size_t)bpp;
     size_t i = 0;
     if (f == 0) { memcpy(out, cur, n); return; }
@@ -107,14 +111,14 @@ static void filt_row_sse2(int f, uint8_t *out, const uint8_t *cur, const uint8_t
 }
 
 /* ---- fused cost of all five filters: cost[f] = sum |(int8)(x - pred_f)| ---- */
-static inline void costs_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[static 5],
-                              const int paeth) {
+static inline void costs_sse2(size_t n, const uint8_t cur[static n], const uint8_t prev[static n], int bpp,
+                              uint64_t cost[static 5], const bool paeth) {
     const __m128i z = _mm_setzero_si128();
     __m128i acc[5] = { z, z, z, z, z };
     const size_t b = (size_t)bpp;
     size_t i = 0;
     uint64_t s[5] = {};
-    for (; i < b && i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, 0, prev[i], 0));
+    for (; i < b && i < n; i++) for (int f = 0; f < 4 + (int)paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, 0, prev[i], 0));
 #define ACC(k, r) acc[k] = _mm_add_epi64(acc[k], _mm_sad_epu8(_mm_min_epu8(r, _mm_sub_epi8(z, r)), z))
     for (; i + 16 <= n; i += 16) {
         __m128i x = _mm_loadu_si128((const __m128i *)(cur + i)), a = _mm_loadu_si128((const __m128i *)(cur + i - bpp));
@@ -126,18 +130,18 @@ static inline void costs_sse2(const uint8_t *cur, const uint8_t *prev, size_t n,
         if (paeth) { __m128i r4 = _mm_sub_epi8(x, paeth_v16(a, b, c)); ACC(4, r4); }
     }
 #undef ACC
-    for (; i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, cur[i - b], prev[i], prev[i - b]));
+    for (; i < n; i++) for (int f = 0; f < 4 + (int)paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, cur[i - b], prev[i], prev[i - b]));
     for (int f = 0; f < 5; f++)
         cost[f] = s[f] + (uint64_t)_mm_cvtsi128_si64(acc[f]) + (uint64_t)_mm_cvtsi128_si64(_mm_unpackhi_epi64(acc[f], acc[f]));
 }
-[[gnu::target("avx2")]] static inline void costs_avx2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp,
-                                                              uint64_t cost[static 5], const int paeth) {
+[[gnu::target("avx2")]] static inline void costs_avx2(size_t n, const uint8_t cur[static n], const uint8_t prev[static n],
+                                                      int bpp, uint64_t cost[static 5], const bool paeth) {
     const __m256i z = _mm256_setzero_si256();
     __m256i acc[5] = { z, z, z, z, z };
     const size_t b = (size_t)bpp;
     size_t i = 0;
     uint64_t s[5] = {};
-    for (; i < b && i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, 0, prev[i], 0));
+    for (; i < b && i < n; i++) for (int f = 0; f < 4 + (int)paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, 0, prev[i], 0));
 #define ACC(k, r) acc[k] = _mm256_add_epi64(acc[k], _mm256_sad_epu8(_mm256_min_epu8(r, _mm256_sub_epi8(z, r)), z))
     for (; i + 32 <= n; i += 32) {
         __m256i x = _mm256_loadu_si256((const __m256i *)(cur + i)), a = _mm256_loadu_si256((const __m256i *)(cur + i - bpp));
@@ -149,7 +153,7 @@ static inline void costs_sse2(const uint8_t *cur, const uint8_t *prev, size_t n,
         if (paeth) { __m256i r4 = _mm256_sub_epi8(x, paeth_v32(a, b, c)); ACC(4, r4); }
     }
 #undef ACC
-    for (; i < n; i++) for (int f = 0; f < 4 + paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, cur[i - b], prev[i], prev[i - b]));
+    for (; i < n; i++) for (int f = 0; f < 4 + (int)paeth; f++) s[f] += (uint64_t)absres(cur[i] - qpng__pred(f, cur[i - b], prev[i], prev[i - b]));
     for (int f = 0; f < 5; f++) {
         __m128i v = _mm_add_epi64(_mm256_castsi256_si128(acc[f]), _mm256_extracti128_si256(acc[f], 1));
         cost[f] = s[f] + (uint64_t)_mm_cvtsi128_si64(v) + (uint64_t)_mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v));
@@ -157,30 +161,33 @@ static inline void costs_sse2(const uint8_t *cur, const uint8_t *prev, size_t n,
 }
 
 /* paeth = 0 skips the (expensive) Paeth cost and reports it as UINT64_MAX; constant-folded per wrapper */
-static void costs4_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[static 5]) {
-    costs_sse2(cur, prev, n, bpp, cost, 0); cost[4] = UINT64_MAX;
+static void costs4_sse2(size_t n, const uint8_t cur[static n], const uint8_t prev[static n], int bpp,
+                        uint64_t cost[static 5]) {
+    costs_sse2(n, cur, prev, bpp, cost, false); cost[4] = UINT64_MAX;
 }
-static void costs5_sse2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp, uint64_t cost[static 5]) {
-    costs_sse2(cur, prev, n, bpp, cost, 1);
+static void costs5_sse2(size_t n, const uint8_t cur[static n], const uint8_t prev[static n], int bpp,
+                        uint64_t cost[static 5]) {
+    costs_sse2(n, cur, prev, bpp, cost, true);
 }
-[[gnu::target("avx2")]] static void costs4_avx2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp,
-                                                        uint64_t cost[static 5]) {
-    costs_avx2(cur, prev, n, bpp, cost, 0); cost[4] = UINT64_MAX;
+[[gnu::target("avx2")]] static void costs4_avx2(size_t n, const uint8_t cur[static n], const uint8_t prev[static n],
+                                                int bpp, uint64_t cost[static 5]) {
+    costs_avx2(n, cur, prev, bpp, cost, false); cost[4] = UINT64_MAX;
 }
-[[gnu::target("avx2")]] static void costs5_avx2(const uint8_t *cur, const uint8_t *prev, size_t n, int bpp,
-                                                        uint64_t cost[static 5]) {
-    costs_avx2(cur, prev, n, bpp, cost, 1);
+[[gnu::target("avx2")]] static void costs5_avx2(size_t n, const uint8_t cur[static n], const uint8_t prev[static n],
+                                                int bpp, uint64_t cost[static 5]) {
+    costs_avx2(n, cur, prev, bpp, cost, true);
 }
 #endif /* QPNG_X86 */
 
-void qpng__filter_image(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t h, size_t n, int bpp, int mode) {
-    qpng__filter_rows(dst, px, stride, 0, h, n, bpp, mode);
+void qpng__filter_image(uint32_t h, size_t n, uint8_t dst[static (size_t)h * (n + 1)], const uint8_t *px,
+                        size_t stride, int bpp, int mode) {
+    qpng__filter_rows(0, h, n, dst, px, stride, bpp, mode);
 }
 
-void qpng__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t y0, uint32_t y1, size_t n, int bpp,
-                     int mode) {
+void qpng__filter_rows(uint32_t y0, uint32_t y1, size_t n, uint8_t dst[static (size_t)(y1 - y0) * (n + 1)],
+                       const uint8_t *px, size_t stride, int bpp, int mode) {
 #if QPNG_X86
-    const int avx2 = qpng__have_avx2();
+    const bool avx2 = qpng__have_avx2();
 #endif
     uint8_t zrow_small[4096 + 64];
     /* the all-zero predecessor of row 0 (only needed if row 0 is in range) */
@@ -199,11 +206,11 @@ void qpng__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t 
             uint64_t cost[5];
 #if QPNG_X86
             if (mode == QPNG__FILTER_ADAPTIVE_FLAT)
-                (avx2 ? costs4_avx2 : costs4_sse2)(cur, prev, n, bpp, cost);
+                (avx2 ? costs4_avx2 : costs4_sse2)(n, cur, prev, bpp, cost);
             else
-                (avx2 ? costs5_avx2 : costs5_sse2)(cur, prev, n, bpp, cost);
+                (avx2 ? costs5_avx2 : costs5_sse2)(n, cur, prev, bpp, cost);
 #else
-            costs_scalar(cur, prev, n, bpp, cost, mode != QPNG__FILTER_ADAPTIVE_FLAT);
+            costs_scalar(n, cur, prev, bpp, cost, mode != QPNG__FILTER_ADAPTIVE_FLAT);
 #endif
             f = 0;
             for (int k = 1; k < 5; k++) if (cost[k] < cost[f]) f = k;
@@ -213,9 +220,9 @@ void qpng__filter_rows(uint8_t *dst, const uint8_t *px, size_t stride, uint32_t 
         }
         o[0] = (uint8_t)f;
 #if QPNG_X86
-        if (avx2) filt_row_avx2(f, o + 1, cur, prev, n, bpp); else filt_row_sse2(f, o + 1, cur, prev, n, bpp);
+        if (avx2) filt_row_avx2(f, n, o + 1, cur, prev, bpp); else filt_row_sse2(f, n, o + 1, cur, prev, bpp);
 #else
-        filt_row_scalar(f, o + 1, cur, prev, n, bpp);
+        filt_row_scalar(f, n, o + 1, cur, prev, bpp);
 #endif
     }
 }

@@ -22,23 +22,23 @@ static void full_roundtrip(void) {
     static const uint8_t exif[] = { 'M', 'M', 0, 42, 0, 0, 0, 8, 0, 0 };
     static const uint8_t priv[] = { 1, 2, 3 };
     qpng_text tx[4] = {
-        { QPNG_TEXT_TEXT, "Title", "hello", 0, nullptr, nullptr, 0 },
-        { QPNG_TEXT_ZTXT, "Comment", "compressed compressed compressed", 0, nullptr, nullptr, 0 },
-        { QPNG_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", 1 },
-        { QPNG_TEXT_ITXT, "Author", "x", 0, "", "", 0 } };
+        { QPNG_TEXT_TEXT, "Title", "hello", 0, nullptr, nullptr, false },
+        { QPNG_TEXT_ZTXT, "Comment", "compressed compressed compressed", 0, nullptr, nullptr, false },
+        { QPNG_TEXT_ITXT, "Description", "gr\xc3\xbc\xc3\x9f" "e", 0, "de", "Beschreibung", true },
+        { QPNG_TEXT_ITXT, "Author", "x", 0, "", "", false } };
     qpng_chunk ch[3] = { { "prVa", QPNG_CHUNK_BEFORE_IDAT, priv, 3 }, { "prVb", QPNG_CHUNK_BEFORE_IDAT, priv, 2 },
                        { "prVc", QPNG_CHUNK_AFTER_IDAT, nullptr, 0 } };
     qpng_metadata m = {};
-    m.has_gama = 1; m.gamma = 45455;
-    m.has_chrm = 1; for (int i = 0; i < 8; i++) m.chrm[i] = 1000u * (uint32_t)(i + 1);
-    m.has_cicp = 1; m.cicp[0] = 9; m.cicp[1] = 16; m.cicp[2] = 0; m.cicp[3] = 1;
-    m.has_mdcv = 1; for (int i = 0; i < 6; i++) m.mdcv_primaries[i] = (uint16_t)(100 * i + 1);
+    m.has_gama = true; m.gamma = 45455;
+    m.has_chrm = true; for (int i = 0; i < 8; i++) m.chrm[i] = 1000u * (uint32_t)(i + 1);
+    m.has_cicp = true; m.cicp[0] = 9; m.cicp[1] = 16; m.cicp[2] = 0; m.cicp[3] = 1;
+    m.has_mdcv = true; for (int i = 0; i < 6; i++) m.mdcv_primaries[i] = (uint16_t)(100 * i + 1);
     m.mdcv_white[0] = 15635; m.mdcv_white[1] = 16450; m.mdcv_max_lum = 10000000; m.mdcv_min_lum = 1;
-    m.has_clli = 1; m.clli_max_cll = 1000; m.clli_max_fall = 400;
-    m.has_phys = 1; m.phys_x = 2835; m.phys_y = 2836; m.phys_unit = 1;
-    m.has_time = 1; m.time_year = 2026; m.time_month = 10; m.time_day = 10; m.time_hour = 22; m.time_minute = 30; m.time_second = 59;
-    m.has_bkgd = 1; m.bkgd_size = 6; m.bkgd[1] = 10; m.bkgd[3] = 20; m.bkgd[5] = 30;
-    m.has_sbit = 1; m.sbit_size = 3; m.sbit[0] = 5; m.sbit[1] = 6; m.sbit[2] = 5;
+    m.has_clli = true; m.clli_max_cll = 1000; m.clli_max_fall = 400;
+    m.has_phys = true; m.phys_x = 2835; m.phys_y = 2836; m.phys_unit = 1;
+    m.has_time = true; m.time_year = 2026; m.time_month = 10; m.time_day = 10; m.time_hour = 22; m.time_minute = 30; m.time_second = 59;
+    m.has_bkgd = true; m.bkgd_size = 6; m.bkgd[1] = 10; m.bkgd[3] = 20; m.bkgd[5] = 30;
+    m.has_sbit = true; m.sbit_size = 3; m.sbit[0] = 5; m.sbit[1] = 6; m.sbit[2] = 5;
     m.iccp_name = "test profile"; m.iccp = icc; m.iccp_size = sizeof icc;
     m.exif = exif; m.exif_size = sizeof exif;
     m.texts = tx; m.text_count = 4; m.chunks = ch; m.chunk_count = 3;
@@ -46,9 +46,9 @@ static void full_roundtrip(void) {
     uint8_t *png = enc(&m, QPNG_COLOR_RGB, 8, &pn, &st);
     CHECK(st == QPNG_OK);
     if (st) return;
-    qpng_image im; CHECK(qpng_decode(png, pn, nullptr, &im) == QPNG_OK); qpng_image_free(&im);
+    qpng_image im; CHECK(qpng_decode(pn, png, nullptr, &im) == QPNG_OK); qpng_image_free(&im);
     qpng_metadata r;
-    CHECK(qpng_read_metadata(png, pn, nullptr, &r) == QPNG_OK);
+    CHECK(qpng_read_metadata(pn, png, nullptr, &r) == QPNG_OK);
     CHECK(r.has_gama && r.gamma == 45455);
     CHECK(r.has_chrm && r.chrm[7] == 8000);
     CHECK(r.has_cicp && r.cicp[1] == 16 && r.cicp[3] == 1);
@@ -79,28 +79,28 @@ static void full_roundtrip(void) {
     qpng_buffer_free(png2, nullptr);
     /* limits: the ICC profile and the zTXt exceed a 20-byte per-chunk limit */
     qpng_metadata_options mo; qpng_metadata_options_init(&mo); mo.max_chunk_decompressed = 20;
-    qpng_metadata r2; CHECK(qpng_read_metadata(png, pn, &mo, &r2) == QPNG_OK);
+    qpng_metadata r2; CHECK(qpng_read_metadata(pn, png, &mo, &r2) == QPNG_OK);
     CHECK(!r2.iccp && r2.text_count == 3 && r2.skipped == 2);   /* iCCP + zTXt (33 bytes); the 7-byte compressed iTXt fits */
     qpng_metadata_free(&r2);
-    mo.max_chunk_decompressed = 0; mo.max_chunks = 2; mo.keep_unknown = 0;
-    CHECK(qpng_read_metadata(png, pn, &mo, &r2) == QPNG_OK && r2.text_count == 2 && r2.chunk_count == 0);
+    mo.max_chunk_decompressed = 0; mo.max_chunks = 2; mo.keep_unknown = false;
+    CHECK(qpng_read_metadata(pn, png, &mo, &r2) == QPNG_OK && r2.text_count == 2 && r2.chunk_count == 0);
     qpng_metadata_free(&r2);
     /* corrupt ancillary CRC: chunk skipped, rest intact; allocator hooks: no leaks */
-    int gl; const uint8_t *g = find_chunk(png, pn, "gAMA", &gl);
+    int gl; const uint8_t *g = find_chunk(pn, png, "gAMA", &gl);
     CHECK(g != nullptr);
     if (g) {
         png[g - png + 1] ^= 1;
-        CHECK(qpng_read_metadata(png, pn, nullptr, &r2) == QPNG_OK && !r2.has_gama && r2.skipped == 1 && r2.text_count == 4);
+        CHECK(qpng_read_metadata(pn, png, nullptr, &r2) == QPNG_OK && !r2.has_gama && r2.skipped == 1 && r2.text_count == 4);
         qpng_metadata_free(&r2);
     }
     qpng_metadata_free(&r); CHECK(r.internal_ == nullptr);
     qpng_buffer_free(png, nullptr);
     /* validation */
-    qpng_text bad = { QPNG_TEXT_TEXT, "", "x", 0, nullptr, nullptr, 0 };
+    qpng_text bad = { QPNG_TEXT_TEXT, "", "x", 0, nullptr, nullptr, false };
     qpng_metadata v = {}; v.texts = &bad; v.text_count = 1;
     CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
     bad.keyword = " lead"; CHECK(enc(&v, QPNG_COLOR_RGB, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
-    memset(&v, 0, sizeof v); v.has_bkgd = 1; v.bkgd_size = 6;
+    v = (qpng_metadata){ .has_bkgd = true, .bkgd_size = 6 };
     CHECK(enc(&v, QPNG_COLOR_PALETTE, 8, &pn, &st) == nullptr && st == QPNG_ERR_ARGUMENT);
     qpng_chunk crit = { "CRIT", QPNG_CHUNK_BEFORE_IDAT, priv, 3 };
     memset(&v, 0, sizeof v); v.chunks = &crit; v.chunk_count = 1;
@@ -114,13 +114,13 @@ static void bomb(void) {
     char *s = malloc(big + 1);
     if (!s) return;
     memset(s, 'a', big); s[big] = 0;
-    qpng_text tx = { QPNG_TEXT_ZTXT, "Bomb", s, big, nullptr, nullptr, 0 };
+    qpng_text tx = { QPNG_TEXT_ZTXT, "Bomb", s, big, nullptr, nullptr, false };
     qpng_metadata m = {}; m.texts = &tx; m.text_count = 1;
     size_t pn; qpng_status st; uint8_t *png = enc(&m, QPNG_COLOR_GRAY, 8, &pn, &st);
     free(s);
     CHECK(st == QPNG_OK && pn < (1u << 20));
     qpng_metadata r;
-    CHECK(qpng_read_metadata(png, pn, nullptr, &r) == QPNG_OK && r.text_count == 0 && r.skipped == 1);
+    CHECK(qpng_read_metadata(pn, png, nullptr, &r) == QPNG_OK && r.text_count == 0 && r.skipped == 1);
     qpng_metadata_free(&r);
     qpng_buffer_free(png, nullptr);
 }
@@ -131,7 +131,7 @@ static qpng_metadata rd(const char *dir, const char *name) {
     qpng_tool_autofree uint8_t *b = slurp(path, &n);
     qpng_metadata m = {};
     if (!b) { fprintf(stderr, "missing %s\n", path); fails++; return m; }
-    CHECK(qpng_read_metadata(b, n, nullptr, &m) == QPNG_OK);
+    CHECK(qpng_read_metadata(n, b, nullptr, &m) == QPNG_OK);
     return m;
 }
 static const qpng_text *text(const qpng_metadata *m, const char *k) {
@@ -173,18 +173,15 @@ static void reencode_all(int argc, char **argv) {
         qpng_tool_autofree uint8_t *b = slurp(argv[i], &n);
         if (!b) continue;
         qpng_metadata m = {}; qpng_image im = {};
-        if (qpng_read_metadata(b, n, nullptr, &m) != QPNG_OK) continue;
-        if (qpng_decode(b, n, nullptr, &im) != QPNG_OK) { qpng_metadata_free(&m); continue; }
-        int pl = 0, tl = 0; qpng_encode_options o = {}; qpng_encode_options_init(&o);
-        o.palette = find_chunk(b, n, "PLTE", &pl); o.palette_entries = o.palette ? pl / 3 : 0;
-        if (im.color_type != QPNG_COLOR_PALETTE) { o.palette = nullptr; o.palette_entries = 0; }
-        o.trns = find_chunk(b, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;
-        if (im.color_type == QPNG_COLOR_GRAY_ALPHA || im.color_type == QPNG_COLOR_RGBA) { o.trns = nullptr; o.trns_bytes = 0; }
+        if (qpng_read_metadata(n, b, nullptr, &m) != QPNG_OK) continue;
+        if (qpng_decode(n, b, nullptr, &im) != QPNG_OK) { qpng_metadata_free(&m); continue; }
+        qpng_encode_options o = {}; qpng_encode_options_init(&o);
+        qpng_tool_carry_plte_trns(n, b, im.color_type, &o);
         o.metadata = &m;
         uint8_t *png; size_t pn;
         qpng_status st = qpng_encode(im.pixels, im.width, im.height, im.stride, (qpng_color)im.color_type, im.bit_depth, &o, &png, &pn);
         if (st == QPNG_OK) {
-            qpng_metadata r; CHECK(qpng_read_metadata(png, pn, nullptr, &r) == QPNG_OK);
+            qpng_metadata r; CHECK(qpng_read_metadata(pn, png, nullptr, &r) == QPNG_OK);
             CHECK(r.text_count == m.text_count && r.chunk_count == m.chunk_count && r.has_gama == m.has_gama &&
                   r.gamma == m.gamma && r.has_time == m.has_time && r.exif_size == m.exif_size && r.iccp_size == m.iccp_size &&
                   r.has_bkgd == m.has_bkgd && r.has_sbit == m.has_sbit && r.has_phys == m.has_phys && r.has_chrm == m.has_chrm);

@@ -10,7 +10,7 @@
 #include <zlib.h>
 #endif
 
-static int check(const char *what, const unsigned char *in, size_t n, const unsigned char *z, size_t zn) {
+static int check(const char *what, size_t n, const unsigned char in[static n], size_t zn, const unsigned char z[static zn]) {
     qpng_tool_autofree unsigned char *b = malloc(n + 1);
     size_t got = 0; int bad = 0;
     struct libdeflate_decompressor *d = libdeflate_alloc_decompressor();
@@ -27,7 +27,7 @@ static int check(const char *what, const unsigned char *in, size_t n, const unsi
     return bad != 0;
 }
 
-static void gen(unsigned char *p, size_t n, int kind, unsigned seed) {
+static void gen(size_t n, unsigned char p[static n], int kind, unsigned seed) {
     srand(seed);
     for (size_t i = 0; i < n; i++)
         switch (kind) {
@@ -39,18 +39,18 @@ static void gen(unsigned char *p, size_t n, int kind, unsigned seed) {
 }
 
 int main(void) {
-    static const size_t sizes[] = { 1, 7, 33, 100, 4095, 5000, 65536, 70001, 300000, 1200000 };
+    static constexpr size_t sizes[] = { 1, 7, 33, 100, 4095, 5000, 65536, 70001, 300000, 1200000 };
     /* 1000 + L: level L with qpng's tuning knobs (search depth 48, nice 96, fixed minimum match 3) */
-    static const int levels[] = { 1, 6, 9, 12, LIBDEFLATE_PNG_FAST_LEVEL, -1, LIBDEFLATE_PNG_ULTRA_LEVEL,
-                                  1004, 1005, 1008, 1010 };
+    static constexpr int levels[] = { 1, 6, 9, 12, LIBDEFLATE_PNG_FAST_LEVEL, -1, LIBDEFLATE_PNG_ULTRA_LEVEL,
+                                      1004, 1005, 1008, 1010 };
     int fails = 0, runs = 0;
-    for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++)
+    for (size_t si = 0; si < _Countof(sizes); si++)
         for (int kind = 0; kind < 4; kind++) {
             size_t n = sizes[si];
             qpng_tool_autofree unsigned char *in = malloc(n + 1);
             qpng_tool_autofree unsigned char *z = malloc(n + n / 8 + 4096);
-            gen(in + 1, n, kind, (unsigned)si * 7 + (unsigned)kind);
-            for (size_t li = 0; li < sizeof levels / sizeof *levels; li++) {
+            gen(n, in + 1, kind, (unsigned)si * 7 + (unsigned)kind);
+            for (size_t li = 0; li < _Countof(levels); li++) {
                 int lv = levels[li];
                 struct libdeflate_compressor *c = libdeflate_alloc_compressor(lv < 0 ? LIBDEFLATE_PNG_FAST_LEVEL
                                                                               : lv >= 1000 ? lv - 1000 : lv);
@@ -61,7 +61,7 @@ int main(void) {
                 char what[64]; snprintf(what, sizeof what, "level %d kind %d", lv, kind);
                 runs++;
                 if (!zn) { fprintf(stderr, "FAIL %s n=%zu: exceeds bound\n", what, n); fails++; }
-                else fails += check(what, in + 1, n, z, zn);
+                else fails += check(what, n, in + 1, zn, z);
                 if (lv == LIBDEFLATE_PNG_ULTRA_LEVEL) {   /* chunked: odd chunk sizes, history byte carried */
                     struct libdeflate_png_ultra_state st = { 0, 0, 0 };
                     size_t zo = 0, off = 0, step = 1000 + n / 3;
@@ -75,7 +75,7 @@ int main(void) {
                     snprintf(what, sizeof what, "ultra chunked kind %d", kind);
                     runs++;
                     if (off != n) { fprintf(stderr, "FAIL %s n=%zu: chunk overflow\n", what, n); fails++; }
-                    else fails += check(what, in + 1, n, z, zo);
+                    else fails += check(what, n, in + 1, zo, z);
                 }
                 libdeflate_free_compressor(c);
             }

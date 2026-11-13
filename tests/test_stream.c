@@ -7,38 +7,38 @@ static int fails;
 static uint32_t rng = 12345;
 static uint32_t rnd(void) { rng = rng * 1103515245u + 12345u; return rng >> 8; }
 
-typedef struct { uint8_t *buf; size_t stride, size; uint32_t next; int bad, abort_at; } rows_t;
-static int on_row(void *u, uint32_t y, const uint8_t *row, size_t n) {
+typedef struct { uint8_t *buf; size_t stride, size; uint32_t next; bool bad; int abort_at; } rows_t;
+static int on_row(void *u, uint32_t y, size_t n, const uint8_t row[static n]) {
     rows_t *r = u;
     if (r->abort_at >= 0 && (int)y == r->abort_at) return 1;
-    if (y != r->next || n != r->stride || (size_t)(y + 1) * n > r->size) { r->bad = 1; return 0; }
+    if (y != r->next || n != r->stride || (size_t)(y + 1) * n > r->size) { r->bad = true; return 0; }
     memcpy(r->buf + (size_t)y * n, row, n); r->next++;
     return 0;
 }
 typedef struct { const uint8_t *p; size_t n, pos; } reader_t;
-static size_t rd(void *u, uint8_t *b, size_t cap) {
+static size_t rd(void *u, size_t cap, uint8_t b[static cap]) {
     reader_t *r = u; size_t k = 1 + rnd() % 5000; if (k > cap) k = cap; if (k > r->n - r->pos) k = r->n - r->pos;
     memcpy(b, r->p + r->pos, k); r->pos += k; return k;
 }
 
-static qpng_status push_random(qpng_decoder *d, const uint8_t *b, size_t n) {
+static qpng_status push_random(qpng_decoder *d, size_t n, const uint8_t b[static n]) {
     qpng_status s = QPNG_MORE_DATA;
     for (size_t pos = 0; pos < n && s == QPNG_MORE_DATA;) {
         size_t k = rnd() % 4 == 0 ? 1 : 1 + rnd() % (rnd() % 2 ? 64 : 20000);
         if (k > n - pos) k = n - pos;
-        s = qpng_decoder_push(d, b + pos, k); pos += k;
+        s = qpng_decoder_push(d, k, b + pos); pos += k;
     }
     return s;
 }
 
-static void decode_file(const uint8_t *b, size_t n, const char *name) {
+static void decode_file(size_t n, const uint8_t b[static n], const char *name) {
     for (int mode = 0; mode < 3; mode++) {
         qpng_decode_options o; qpng_decode_options_init(&o); o.output = (qpng_output)mode; o.verify_adler = mode == 2;
         qpng_image ref;
-        qpng_status rs = qpng_decode(b, n, &o, &ref);
+        qpng_status rs = qpng_decode(n, b, &o, &ref);
         /* image mode */
         qpng_decoder *d; CHECK(qpng_decoder_new(&o, nullptr, nullptr, &d) == QPNG_OK);
-        qpng_status s = push_random(d, b, n);
+        qpng_status s = push_random(d, n, b);
         qpng_image im;
         if (s == QPNG_OK) s = qpng_decoder_finish(d, &im);
         if (rs == QPNG_OK) {
@@ -52,7 +52,7 @@ static void decode_file(const uint8_t *b, size_t n, const char *name) {
         rows_t r; memset(&r, 0, sizeof r); r.abort_at = -1;
         if (rs == QPNG_OK) { r.stride = ref.stride; r.size = ref.size; r.buf = malloc(ref.size + 1); }
         CHECK(qpng_decoder_new(&o, on_row, &r, &d) == QPNG_OK);
-        s = push_random(d, b, n);
+        s = push_random(d, n, b);
         qpng_info info;
         if (s == QPNG_OK) { CHECK(qpng_decoder_info(d, &info) == QPNG_OK); s = qpng_decoder_finish(d, nullptr); }
         if (rs == QPNG_OK) {
@@ -74,22 +74,18 @@ static void decode_file(const uint8_t *b, size_t n, const char *name) {
 }
 
 typedef struct { uint8_t *p; size_t n, cap; int fail_after; } sink_t;
-static int wr(void *u, const uint8_t *d, size_t n) {
+static int wr(void *u, size_t n, const uint8_t d[static n]) {
     sink_t *s = u;
     if (s->fail_after >= 0 && s->n + n > (size_t)s->fail_after) return 1;
     if (s->n + n > s->cap) { s->cap = (s->n + n) * 2; s->p = realloc(s->p, s->cap); }
     memcpy(s->p + s->n, d, n); s->n += n; return 0;
 }
 
-static void encode_file(const uint8_t *b, size_t n, const char *name) {
+static void encode_file(size_t n, const uint8_t b[static n], const char *name) {
     qpng_image src;
-    if (qpng_decode(b, n, nullptr, &src) != QPNG_OK) return;
-    int pl = 0, tl = 0; qpng_encode_options o; qpng_encode_options_init(&o);
-    o.palette = find_chunk(b, n, "PLTE", &pl); o.palette_entries = o.palette ? pl / 3 : 0;
-    if (src.color_type != QPNG_COLOR_PALETTE) { o.palette = nullptr; o.palette_entries = 0; }
-    o.trns = find_chunk(b, n, "tRNS", &tl); o.trns_bytes = o.trns ? tl : 0;
-    if (o.trns && ((src.color_type == QPNG_COLOR_GRAY && tl != 2) || (src.color_type == QPNG_COLOR_RGB && tl != 6) ||
-                   (src.color_type == QPNG_COLOR_PALETTE && tl > o.palette_entries) || src.color_type >= 4)) { o.trns = nullptr; o.trns_bytes = 0; }
+    if (qpng_decode(n, b, nullptr, &src) != QPNG_OK) return;
+    qpng_encode_options o; qpng_encode_options_init(&o);
+    qpng_tool_carry_plte_trns(n, b, src.color_type, &o);
     for (int v = 0; v < 4 * 3; v++) {
         qpng_encode_options e = o; e.preset = (qpng_preset)(v % 4); e.backend = v / 4;
         if (!qpng_backend_available((qpng_backend)e.backend)) continue;
@@ -105,39 +101,39 @@ static void encode_file(const uint8_t *b, size_t n, const char *name) {
         CHECK(qpng_encoder_push_rows(enc, src.pixels, 0, 1) == QPNG_ERR_STATE || s);
         qpng_encoder_free(enc);
         qpng_image back;
-        if (s || qpng_decode(sk.p, sk.n, nullptr, &back) != QPNG_OK) { fprintf(stderr, "stream encode %s v%d: %s\n", name, v, qpng_status_string(s)); fails++; free(sk.p); continue; }
+        if (s || qpng_decode(sk.n, sk.p, nullptr, &back) != QPNG_OK) { fprintf(stderr, "stream encode %s v%d: %s\n", name, v, qpng_status_string(s)); fails++; free(sk.p); continue; }
         if (back.size != src.size || memcmp(back.pixels, src.pixels, src.size)) { fprintf(stderr, "stream encode mismatch %s v%d\n", name, v); fails++; }
         qpng_image_free(&back); free(sk.p);
     }
     qpng_image_free(&src);
 }
 
-static void errors(const uint8_t *b, size_t n) {
+static void errors(size_t n, const uint8_t b[static n]) {
     qpng_decoder *d; qpng_image im;
     /* truncated: finish before IEND */
     CHECK(qpng_decoder_new(nullptr, nullptr, nullptr, &d) == QPNG_OK);
-    CHECK(qpng_decoder_push(d, b, n / 2) == QPNG_MORE_DATA);
+    CHECK(qpng_decoder_push(d, n / 2, b) == QPNG_MORE_DATA);
     CHECK(qpng_decoder_finish(d, &im) == QPNG_ERR_STATE);
     qpng_decoder_free(d);
     /* header first */
     CHECK(qpng_decoder_new(nullptr, nullptr, nullptr, &d) == QPNG_OK);
     qpng_info info;
-    CHECK(qpng_decoder_push(d, b, 20) == QPNG_MORE_DATA && qpng_decoder_info(d, &info) == QPNG_MORE_DATA);
-    CHECK(qpng_decoder_push(d, b + 20, 20) == QPNG_MORE_DATA && qpng_decoder_info(d, &info) == QPNG_OK && info.width > 0);
+    CHECK(qpng_decoder_push(d, 20, b) == QPNG_MORE_DATA && qpng_decoder_info(d, &info) == QPNG_MORE_DATA);
+    CHECK(qpng_decoder_push(d, 20, b + 20) == QPNG_MORE_DATA && qpng_decoder_info(d, &info) == QPNG_OK && info.width > 0);
     qpng_decoder_free(d);
     /* bad CRC (sticky) */
     qpng_tool_autofree uint8_t *c = malloc(n); memcpy(c, b, n); c[n - 20] ^= 0x40;
     CHECK(qpng_decoder_new(nullptr, nullptr, nullptr, &d) == QPNG_OK);
-    qpng_status s = qpng_decoder_push(d, c, n);
+    qpng_status s = qpng_decoder_push(d, n, c);
     CHECK(s == QPNG_ERR_CRC || s == QPNG_ERR_DEFLATE);
-    CHECK(qpng_decoder_push(d, c, 1) == s);
+    CHECK(qpng_decoder_push(d, 1, c) == s);
     qpng_decoder_free(d);
     /* row callback abort */
     qpng_decode_options o; qpng_decode_options_init(&o);
-    CHECK(qpng_decode(b, n, &o, &im) == QPNG_OK);
-    rows_t r; memset(&r, 0, sizeof r); r.stride = im.stride; r.size = im.size; r.buf = malloc(im.size); r.abort_at = 1;
+    CHECK(qpng_decode(n, b, &o, &im) == QPNG_OK);
+    rows_t r = { .stride = im.stride, .size = im.size, .buf = malloc(im.size), .abort_at = 1 };
     CHECK(qpng_decoder_new(&o, on_row, &r, &d) == QPNG_OK);
-    s = qpng_decoder_push(d, b, n); if (s == QPNG_OK) s = qpng_decoder_finish(d, nullptr);
+    s = qpng_decoder_push(d, n, b); if (s == QPNG_OK) s = qpng_decoder_finish(d, nullptr);
     CHECK(s == QPNG_ERR_ABORTED);
     qpng_decoder_free(d); free(r.buf);
     /* write callback abort, too many rows */
@@ -162,9 +158,9 @@ int main(int argc, char **argv) {
         size_t n = 0;
         qpng_tool_autofree uint8_t *b = slurp(argv[i], &n);
         if (!b) { fprintf(stderr, "missing %s\n", argv[i]); fails++; continue; }
-        decode_file(b, n, argv[i]);
-        encode_file(b, n, argv[i]);
-        if (i == 1) errors(b, n);
+        decode_file(n, b, argv[i]);
+        encode_file(n, b, argv[i]);
+        if (i == 1) errors(n, b);
         files++;
     }
     printf("stream: %d files, %d failures\n", files, fails);

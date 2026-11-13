@@ -15,7 +15,7 @@ static const struct { qpng_color c; int d; int ch; } FMT[] = {
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 4) return 0;
-    const unsigned f = data[0] % (sizeof FMT / sizeof FMT[0]);
+    const unsigned f = data[0] % _Countof(FMT);
     const uint32_t w = 1 + data[1] % 64, h = 1 + data[2] % 64;
     const int knob = data[3], knob2 = data[2] ^ data[0];   /* knob2: backend, zlib strategy */
     data += 4; size -= 4;
@@ -34,8 +34,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     qpng_encode_options_init(&eo);
     eo.preset = (qpng_preset)(knob & 3);
     eo.filter = (knob >> 2) % 7 - 1;                                   /* AUTO, NONE..ADAPTIVE */
-    static const int levels[] = {0, 0, 0, 1, 6, 9, 12, QPNG_DEFLATE_QPNG, QPNG_DEFLATE_QPNG_RLE, QPNG_DEFLATE_QPNG_HIGH, QPNG_DEFLATE_PNGULTRA};
-    eo.deflate_level = levels[(knob >> 5) % 11];
+    static constexpr int levels[] = { 0, 0, 0, 1, 6, 9, 12, QPNG_DEFLATE_QPNG, QPNG_DEFLATE_QPNG_RLE, QPNG_DEFLATE_QPNG_HIGH, QPNG_DEFLATE_PNGULTRA };
+    eo.deflate_level = levels[((unsigned)knob >> 5) % _Countof(levels)];
     eo.backend = (int)(knob2 % 3);                               /* AUTO, LIBDEFLATE, ZLIBNG */
     if (eo.backend == QPNG_BACKEND_ZLIBNG) {
         if (!qpng_backend_available(QPNG_BACKEND_ZLIBNG)) eo.backend = QPNG_BACKEND_AUTO;
@@ -51,9 +51,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     qpng_decode_options dopt;
     qpng_decode_options_init(&dopt);
     dopt.output = QPNG_OUTPUT_RAW;
-    dopt.verify_adler = 1;
+    dopt.verify_adler = true;
     qpng_image img;
-    if (qpng_decode(png, pn, &dopt, &img) != QPNG_OK) abort();
+    if (qpng_decode(pn, png, &dopt, &img) != QPNG_OK) abort();
     if (img.width != w || img.height != h || img.stride != rowbytes) abort();
     for (uint32_t y = 0; y < h; y++)
         if (memcmp(img.pixels + y * img.stride, px + y * rowbytes, rowbytes)) abort();

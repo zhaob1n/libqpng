@@ -47,7 +47,9 @@ if(QPNG_LIBFUZZER)
   add_compile_options(-fsanitize=fuzzer-no-link)   # coverage instrumentation for the library itself
 endif()
 if(QPNG_SANITIZE)
-  add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g)
+  # Clang's -fsanitize=vla-bound treats adjusted parameter arrays `T p[n]` as stack VLAs and traps on n == 0.
+  add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g
+                      $<$<C_COMPILER_ID:Clang>:-fno-sanitize=vla-bound>)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
@@ -152,6 +154,7 @@ else()
   set_target_properties(qpng PROPERTIES LINKER_LANGUAGE C)
 endif()
 target_include_directories(qpng PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_compile_options(qpng INTERFACE -std=gnu2y)
 set_target_properties(qpng PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR})
 
 include(GNUInstallDirs)
